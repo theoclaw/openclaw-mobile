@@ -6,6 +6,8 @@
 Route A（系统级预装 App）主链路已经在 Android fork 里实现：  
 [howardleegeek/botdrop-android#1](https://github.com/howardleegeek/botdrop-android/pull/1)
 
+本机已构建的可安装 APK（debug/universal）：`/Users/howardli/.openclaw/workspace/artifacts/nana-debug-universal.apk`
+
 ## 核心文档
 - 预装方案（面向 3 万台出厂流程）：`/Users/howardli/.openclaw/workspace/PREINSTALL_MOMS.md`
 - 详细计划（域名/限额/订阅/风控/路线图）：`/Users/howardli/.openclaw/workspace/OPENCLAW_MOBILE_DETAILED_PLAN.md`
@@ -27,4 +29,3 @@ cd /Users/howardli/Downloads/openclaw-proxy
 MOCK_MODE=1 ADMIN_KEY=devadmin LISTEN_PORT=8080 ./run_dev.sh
 ./smoke_test.sh http://127.0.0.1:8080
 ```
-
