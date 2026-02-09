@@ -24,3 +24,8 @@ cd android/botdrop-android
 ./gradlew testDebugUnitTest
 ./gradlew assembleDebug
 ```
+
+## Legacy Mirrors（可忽略）
+历史上曾拆成多个 repo；现在已经全部整合进本仓库。旧 repo 仅保留做兼容指向：
+- https://github.com/howardleegeek/botdrop-android
+- https://github.com/howardleegeek/openclaw-proxy
