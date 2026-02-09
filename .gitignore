@@ -1,5 +1,21 @@
-artifacts/
-*.apk
-*.zip
 .DS_Store
+artifacts/
 
+# Android
+android/botdrop-android/**/build/
+android/botdrop-android/.gradle/
+android/botdrop-android/local.properties
+android/botdrop-android/**/*.iml
+android/botdrop-android/**/.idea/
+android/botdrop-android/**/.cxx/
+android/botdrop-android/**/.externalNativeBuild/
+android/botdrop-android/**/.externalNativeBuild/
+
+# Proxy (python)
+proxy/.venv/
+proxy/__pycache__/
+proxy/*.pyc
+proxy/.env
+proxy/data/
+proxy/*.sqlite3
+proxy/*.log
