@@ -1,4 +1,4 @@
-# OpenClaw Mobile (Nana) — Monorepo
+# OpenClaw Mobile (Nana) - Monorepo
 
 面向“**不会配置的人**”的移动端 OpenClaw 方案：把 **系统级预装 Android App（Route A）**、**内置语音聊天 UI**、**出厂预置 device_token**、以及 **OpenAI-compatible Proxy（DeepSeek/Kimi/Claude 三档）** 全部整合在一个仓库里，目标是让用户只需要“点一下说话”。
 
