@@ -1,0 +1,5 @@
+artifacts/
+*.apk
+*.zip
+.DS_Store
+
