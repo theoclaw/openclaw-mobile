@@ -10,6 +10,7 @@ android/botdrop-android/**/.idea/
 android/botdrop-android/**/.cxx/
 android/botdrop-android/**/.externalNativeBuild/
 android/botdrop-android/**/.externalNativeBuild/
+android/botdrop-android/app/src/main/cpp/bootstrap-*.zip
 
 # Proxy (python)
 proxy/.venv/
