@@ -35,6 +35,7 @@ KIMI_BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1").rstrip(
 KIMI_MODEL = os.getenv("KIMI_MODEL", "moonshot-v1-32k")
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_BASE_URL = os.getenv("CLAUDE_BASE_URL", "").rstrip("/")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
 
 LISTEN_HOST = os.getenv("LISTEN_HOST", "127.0.0.1")
@@ -484,8 +485,16 @@ async def _call_llm(
         return res
 
     if provider == "claude":
-        anth = await _call_anthropic_messages(body=body, max_tokens=int(body["max_tokens"]))
-        res = _anthropic_to_openai_completion(anth, public_model=public_model)
+        if CLAUDE_BASE_URL:
+            # OpenAI-compatible endpoint (e.g. OpenRouter)
+            upstream_body = dict(body)
+            upstream_body["model"] = CLAUDE_MODEL
+            res = await _call_openai_compatible(base_url=CLAUDE_BASE_URL, api_key=ANTHROPIC_API_KEY, body=upstream_body)
+        else:
+            # Native Anthropic API
+            anth = await _call_anthropic_messages(body=body, max_tokens=int(body["max_tokens"]))
+            res = _anthropic_to_openai_completion(anth, public_model=public_model)
+        res["model"] = public_model
         usage = res.get("usage") or {}
         completion_tokens = int(usage.get("completion_tokens") or 0)
         await _bump_daily_usage(token, prompt_tokens, completion_tokens)
