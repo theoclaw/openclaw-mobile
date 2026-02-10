@@ -17,10 +17,17 @@ final class OpenClawAPI {
 
     // MARK: - Endpoints
 
-    func createConversation() async throws -> Conversation {
+    func createConversation(systemPrompt: String? = nil) async throws -> Conversation {
         let url = URL(string: "\(baseURLString)/v1/conversations")!
         var request = try authorizedRequest(url: url, method: "POST")
         request.addValue("application/json", forHTTPHeaderField: "Accept")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var body: [String: String] = [:]
+        if let prompt = systemPrompt, !prompt.isEmpty {
+            body["system_prompt"] = prompt
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try validate(response: response, data: data)

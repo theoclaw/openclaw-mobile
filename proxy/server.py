@@ -509,7 +509,10 @@ async def _handle_chat_completions(request: Request, forced_provider: Optional[s
     if not token:
         raise HTTPException(status_code=401, detail="missing bearer token")
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="invalid json body")
 
@@ -574,7 +577,10 @@ async def create_conversation(request: Request) -> Any:
     # Ensure disabled tokens can't use conversation endpoints.
     await _get_tier_for_token(device_token)
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="invalid json body")
 
@@ -672,7 +678,10 @@ async def conversation_chat(conversation_id: str, request: Request) -> Any:
     device_token = _require_device_token(request)
     tier = await _get_tier_for_token(device_token)
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="invalid json body")
 
@@ -796,7 +805,12 @@ async def admin_generate_tokens(
     x_admin_key: Optional[str] = Header(default=None),
 ) -> Any:
     _admin_check(x_admin_key)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid json body")
     tier = str(body.get("tier") or "free")
     count = int(body.get("count") or 1)
     if tier not in LIMITS:
@@ -826,7 +840,12 @@ async def admin_set_tier(
     x_admin_key: Optional[str] = Header(default=None),
 ) -> Any:
     _admin_check(x_admin_key)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid json body")
     tier = str(body.get("tier") or "")
     if tier not in LIMITS:
         raise HTTPException(status_code=400, detail="invalid tier")

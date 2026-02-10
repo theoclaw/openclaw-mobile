@@ -14,6 +14,14 @@ final class ChatViewModel: ObservableObject {
 
     private(set) var conversationId: String?
 
+    static let defaultSystemPrompt = """
+    你是 ClawPhones AI 助手，由 Oyster Labs 开发。你聪明、友好、高效。
+    - 用用户的语言回复（中文问中文答，英文问英文答）
+    - 回复简洁有用，避免冗长
+    - 不要在回复中使用 Markdown 格式（不要用 ** 加粗、不要用 [] 链接）
+    - 用纯文本回复，保持自然对话风格
+    """
+
     init(conversationId: String? = nil) {
         self.conversationId = conversationId
     }
@@ -24,7 +32,9 @@ final class ChatViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let conversation = try await OpenClawAPI.shared.createConversation()
+            let conversation = try await OpenClawAPI.shared.createConversation(
+                systemPrompt: Self.defaultSystemPrompt
+            )
             conversationId = conversation.id
             conversationTitle = conversation.title ?? "New Chat"
             messages = []

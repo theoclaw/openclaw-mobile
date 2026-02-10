@@ -41,7 +41,7 @@ class DeviceConfig {
             return mdmURL
         }
 
-        return "https://api.openclaw.ai"
+        return "http://3.142.69.6:8080"
     }
 
     /// Device mode/tier
