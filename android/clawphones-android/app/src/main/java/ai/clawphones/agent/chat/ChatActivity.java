@@ -39,6 +39,8 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import ai.clawphones.agent.CrashReporter;
+
 /**
  * In-app AI chat UI backed by ClawPhones API.
  *
@@ -193,6 +195,9 @@ public class ChatActivity extends AppCompatActivity {
                     setInputEnabled(true);
                 });
             } catch (ClawPhonesAPI.ApiException e) {
+                if (e.statusCode != 401) {
+                    CrashReporter.reportNonFatal(ChatActivity.this, e, "loading_history");
+                }
                 runSafe(() -> {
                     if (e.statusCode == 401) {
                         ClawPhonesAPI.clearToken(ChatActivity.this);
@@ -204,6 +209,7 @@ public class ChatActivity extends AppCompatActivity {
                     setInputEnabled(true);
                 });
             } catch (IOException | JSONException e) {
+                CrashReporter.reportNonFatal(ChatActivity.this, e, "loading_history");
                 runSafe(() -> {
                     toast("加载历史失败");
                     mBusy = false;
@@ -230,18 +236,23 @@ public class ChatActivity extends AppCompatActivity {
                     setInputEnabled(true);
                 });
             } catch (IOException e) {
+                CrashReporter.reportNonFatal(ChatActivity.this, e, "creating_conversation");
                 runSafe(() -> {
                     updateAssistantMessage(idx, "网络错误: " + safeMsg(e));
                     mBusy = false;
                     setInputEnabled(true);
                 });
             } catch (JSONException e) {
+                CrashReporter.reportNonFatal(ChatActivity.this, e, "creating_conversation");
                 runSafe(() -> {
                     updateAssistantMessage(idx, "数据解析错误");
                     mBusy = false;
                     setInputEnabled(true);
                 });
             } catch (ClawPhonesAPI.ApiException e) {
+                if (e.statusCode != 401) {
+                    CrashReporter.reportNonFatal(ChatActivity.this, e, "creating_conversation");
+                }
                 runSafe(() -> {
                     if (e.statusCode == 401) {
                         ClawPhonesAPI.clearToken(ChatActivity.this);
@@ -258,6 +269,7 @@ public class ChatActivity extends AppCompatActivity {
 
     private void onSend() {
         if (mBusy) return;
+        CrashReporter.setLastAction("sending_message");
 
         String text = safeTrim(mInput.getText().toString());
         if (TextUtils.isEmpty(text)) return;
@@ -304,6 +316,7 @@ public class ChatActivity extends AppCompatActivity {
 
                 @Override
                 public void onError(Exception error) {
+                    CrashReporter.reportNonFatal(ChatActivity.this, error, "streaming_response");
                     runSafe(() -> {
                         clearPendingUpdate();
                         if (error instanceof ClawPhonesAPI.ApiException

@@ -37,6 +37,8 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import ai.clawphones.agent.CrashReporter;
+
 public class ConversationListActivity extends AppCompatActivity {
 
     private RecyclerView mRecycler;
@@ -184,6 +186,7 @@ public class ConversationListActivity extends AppCompatActivity {
             redirectToLogin();
             return;
         }
+        CrashReporter.setLastAction("loading_conversations");
 
         execSafe(() -> {
             try {
@@ -203,6 +206,9 @@ public class ConversationListActivity extends AppCompatActivity {
                     updateEmptyState();
                 });
             } catch (ClawPhonesAPI.ApiException e) {
+                if (e.statusCode != 401) {
+                    CrashReporter.reportNonFatal(ConversationListActivity.this, e, "loading_conversations");
+                }
                 runSafe(() -> {
                     if (e.statusCode == 401) {
                         ClawPhonesAPI.clearToken(ConversationListActivity.this);
@@ -212,6 +218,7 @@ public class ConversationListActivity extends AppCompatActivity {
                     toast("加载失败");
                 });
             } catch (IOException | JSONException e) {
+                CrashReporter.reportNonFatal(ConversationListActivity.this, e, "loading_conversations");
                 runSafe(() -> toast("加载失败"));
             }
         });

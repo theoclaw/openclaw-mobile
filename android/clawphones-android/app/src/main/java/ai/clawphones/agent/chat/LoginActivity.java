@@ -21,6 +21,8 @@ import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import ai.clawphones.agent.CrashReporter;
+
 /**
  * Simple login/register screen for ClawPhones backend auth.
  */
@@ -93,6 +95,7 @@ public class LoginActivity extends AppCompatActivity {
     }
 
     private void doAuth(boolean register) {
+        CrashReporter.setLastAction(register ? "register" : "login");
         String email = safeTrim(mEmail.getText().toString());
         String password = safeTrim(mPassword.getText().toString());
         String name = mRegisterMode && mName != null ? safeTrim(mName.getText().toString()) : "";
