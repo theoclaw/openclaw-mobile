@@ -87,10 +87,14 @@ public class LoginActivity extends AppCompatActivity {
             mName.setVisibility(mRegisterMode ? View.VISIBLE : View.GONE);
         }
         if (mSubmitButton != null) {
-            mSubmitButton.setText(mRegisterMode ? "\u6ce8\u518c" : "\u767b\u5f55");
+            mSubmitButton.setText(mRegisterMode
+                ? R.string.login_button_register
+                : R.string.login_button_login);
         }
         if (mToggle != null) {
-            mToggle.setText(mRegisterMode ? "\u5df2\u6709\u8d26\u53f7\uff1f\u53bb\u767b\u5f55" : "\u6ca1\u6709\u8d26\u53f7\uff1f\u53bb\u6ce8\u518c");
+            mToggle.setText(mRegisterMode
+                ? R.string.login_toggle_to_login
+                : R.string.login_toggle_to_register);
         }
     }
 
@@ -102,15 +106,15 @@ public class LoginActivity extends AppCompatActivity {
 
         // Validate email using Android's built-in pattern
         if (TextUtils.isEmpty(email) || !Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
-            toast("\u8bf7\u8f93\u5165\u6709\u6548\u90ae\u7bb1");
+            toast(getString(R.string.login_error_invalid_email));
             return;
         }
         if (TextUtils.isEmpty(password) || password.length() < 8) {
-            toast("\u5bc6\u7801\u81f3\u5c11 8 \u4f4d");
+            toast(getString(R.string.login_error_password_too_short));
             return;
         }
         if (register && TextUtils.isEmpty(name)) {
-            toast("\u8bf7\u8f93\u5165\u540d\u5b57");
+            toast(getString(R.string.login_error_empty_name));
             return;
         }
 
@@ -140,8 +144,8 @@ public class LoginActivity extends AppCompatActivity {
                         runOnUiThread(() -> {
                             setBusy(false);
                             String msg = e.getMessage();
-                            if (msg == null || msg.isEmpty()) msg = "\u672a\u77e5\u9519\u8bef";
-                            toast("\u8bf7\u6c42\u5931\u8d25: " + msg);
+                            if (msg == null || msg.isEmpty()) msg = getString(R.string.login_error_unknown);
+                            toast(getString(R.string.login_error_request_failed, msg));
                         });
                     }
                 } catch (ClawPhonesAPI.ApiException e) {
@@ -149,14 +153,19 @@ public class LoginActivity extends AppCompatActivity {
                         runOnUiThread(() -> {
                             setBusy(false);
                             String msg = e.getMessage();
-                            if (msg == null || msg.trim().isEmpty()) msg = "HTTP " + e.statusCode;
+                            if (msg == null || msg.trim().isEmpty()) {
+                                msg = getString(R.string.login_error_http_status, e.statusCode);
+                            }
                             // Try to extract "detail" from JSON error
                             try {
                                 org.json.JSONObject errJson = new org.json.JSONObject(msg);
                                 String detail = errJson.optString("detail", null);
                                 if (detail != null && !detail.trim().isEmpty()) msg = detail;
                             } catch (Exception ignored) {}
-                            toast((register ? "\u6ce8\u518c" : "\u767b\u5f55") + "\u5931\u8d25: " + msg);
+                            String action = register
+                                ? getString(R.string.login_action_register)
+                                : getString(R.string.login_action_login);
+                            toast(getString(R.string.login_error_action_failed, action, msg));
                         });
                     }
                 }
@@ -176,9 +185,13 @@ public class LoginActivity extends AppCompatActivity {
             mSubmitButton.setEnabled(!busy);
             mSubmitButton.setAlpha(busy ? 0.6f : 1.0f);
             if (busy) {
-                mSubmitButton.setText(mRegisterMode ? "注册中..." : "登录中...");
+                mSubmitButton.setText(mRegisterMode
+                    ? R.string.login_loading_register
+                    : R.string.login_loading_login);
             } else {
-                mSubmitButton.setText(mRegisterMode ? "\u6ce8\u518c" : "\u767b\u5f55");
+                mSubmitButton.setText(mRegisterMode
+                    ? R.string.login_button_register
+                    : R.string.login_button_login);
             }
         }
         if (mToggle != null) {

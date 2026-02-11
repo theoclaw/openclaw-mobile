@@ -66,7 +66,7 @@ public class ConversationListActivity extends AppCompatActivity {
         Toolbar toolbar = findViewById(R.id.conversation_toolbar);
         if (toolbar != null) {
             setSupportActionBar(toolbar);
-            toolbar.setTitle("ClawPhones");
+            toolbar.setTitle(getString(R.string.application_name));
         }
 
         ImageButton logout = findViewById(R.id.conversation_logout);
@@ -139,10 +139,10 @@ public class ConversationListActivity extends AppCompatActivity {
                 }
 
                 new AlertDialog.Builder(ConversationListActivity.this)
-                    .setMessage("确定删除这个对话吗？")
-                    .setNegativeButton("取消", (d, w) -> mAdapter.notifyItemChanged(position))
+                    .setMessage(getString(R.string.conversation_dialog_delete_confirm))
+                    .setNegativeButton(getString(R.string.conversation_action_cancel), (d, w) -> mAdapter.notifyItemChanged(position))
                     .setOnCancelListener(d -> mAdapter.notifyItemChanged(position))
-                    .setPositiveButton("删除", (d, w) -> deleteConversation(item.id, position))
+                    .setPositiveButton(getString(R.string.conversation_action_delete), (d, w) -> deleteConversation(item.id, position))
                     .show();
             }
         };
@@ -170,12 +170,12 @@ public class ConversationListActivity extends AppCompatActivity {
                         return;
                     }
                     mAdapter.notifyItemChanged(fallbackPosition);
-                    toast("删除失败");
+                    toast(getString(R.string.conversation_error_delete_failed));
                 });
             } catch (IOException e) {
                 runSafe(() -> {
                     mAdapter.notifyItemChanged(fallbackPosition);
-                    toast("删除失败");
+                    toast(getString(R.string.conversation_error_delete_failed));
                 });
             }
         });
@@ -215,11 +215,11 @@ public class ConversationListActivity extends AppCompatActivity {
                         redirectToLogin();
                         return;
                     }
-                    toast("加载失败");
+                    toast(getString(R.string.conversation_error_load_failed));
                 });
             } catch (IOException | JSONException e) {
                 CrashReporter.reportNonFatal(ConversationListActivity.this, e, "loading_conversations");
-                runSafe(() -> toast("加载失败"));
+                runSafe(() -> toast(getString(R.string.conversation_error_load_failed)));
             }
         });
     }
@@ -228,7 +228,7 @@ public class ConversationListActivity extends AppCompatActivity {
         if (item == null || TextUtils.isEmpty(item.id)) return;
         Intent i = new Intent(this, ChatActivity.class);
         i.putExtra("conversation_id", item.id);
-        i.putExtra("title", TextUtils.isEmpty(item.title) ? "新对话" : item.title);
+        i.putExtra("title", TextUtils.isEmpty(item.title) ? getString(R.string.chat_new_conversation) : item.title);
         startActivity(i);
     }
 
@@ -241,9 +241,9 @@ public class ConversationListActivity extends AppCompatActivity {
 
     private void confirmLogout() {
         new AlertDialog.Builder(this)
-            .setMessage("确定退出登录吗？")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("退出", (d, w) -> {
+            .setMessage(getString(R.string.conversation_dialog_logout_confirm))
+            .setNegativeButton(getString(R.string.conversation_action_cancel), null)
+            .setPositiveButton(getString(R.string.conversation_action_logout), (d, w) -> {
                 ClawPhonesAPI.clearToken(ConversationListActivity.this);
                 redirectToLogin();
             })
@@ -278,17 +278,17 @@ public class ConversationListActivity extends AppCompatActivity {
         Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
     }
 
-    private static String formatRelativeTime(long timestampSeconds) {
-        if (timestampSeconds <= 0) return "-";
+    private static String formatRelativeTime(android.content.Context context, long timestampSeconds) {
+        if (timestampSeconds <= 0) return context.getString(R.string.conversation_time_unknown);
 
         long nowSeconds = System.currentTimeMillis() / 1000L;
         long diff = nowSeconds - timestampSeconds;
         if (diff < 0) diff = 0;
 
-        if (diff < 60) return "刚刚";
-        if (diff < 5 * 60) return (diff / 60) + "分钟前";
-        if (diff < 60 * 60) return (diff / 60) + "分钟前";
-        if (diff < 24 * 60 * 60) return (diff / 3600) + "小时前";
+        if (diff < 60) return context.getString(R.string.conversation_time_just_now);
+        if (diff < 5 * 60) return context.getString(R.string.conversation_time_minutes_ago, diff / 60);
+        if (diff < 60 * 60) return context.getString(R.string.conversation_time_minutes_ago, diff / 60);
+        if (diff < 24 * 60 * 60) return context.getString(R.string.conversation_time_hours_ago, diff / 3600);
 
         Calendar now = Calendar.getInstance();
         Calendar target = Calendar.getInstance();
@@ -297,7 +297,7 @@ public class ConversationListActivity extends AppCompatActivity {
         Calendar yesterday = Calendar.getInstance();
         yesterday.add(Calendar.DAY_OF_YEAR, -1);
         if (sameDay(target, yesterday)) {
-            return "昨天";
+            return context.getString(R.string.conversation_time_yesterday);
         }
 
         return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -380,12 +380,15 @@ public class ConversationListActivity extends AppCompatActivity {
             }
 
             void bind(ClawPhonesAPI.ConversationSummary item, OnConversationClickListener listener) {
-                String safeTitle = TextUtils.isEmpty(item.title) ? "新对话" : item.title;
+                android.content.Context context = itemView.getContext();
+                String safeTitle = TextUtils.isEmpty(item.title)
+                    ? context.getString(R.string.chat_new_conversation)
+                    : item.title;
                 long ts = item.updatedAt > 0 ? item.updatedAt : item.createdAt;
 
                 title.setText(safeTitle);
-                time.setText(formatRelativeTime(ts));
-                count.setText(item.messageCount + "条消息");
+                time.setText(formatRelativeTime(context, ts));
+                count.setText(context.getString(R.string.conversation_message_count, item.messageCount));
 
                 itemView.setOnClickListener(v -> {
                     if (listener != null) listener.onClick(item);

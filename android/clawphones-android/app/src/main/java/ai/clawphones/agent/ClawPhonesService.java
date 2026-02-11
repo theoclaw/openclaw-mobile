@@ -191,11 +191,11 @@ public class ClawPhonesService extends Service {
     /**
      * Install OpenClaw by calling the standalone install.sh script.
      * Parses structured output lines for progress reporting:
-     *   BOTDROP_STEP:N:START:message  → callback.onStepStart(N, message)
-     *   BOTDROP_STEP:N:DONE           → callback.onStepComplete(N)
-     *   BOTDROP_COMPLETE              → callback.onComplete()
-     *   BOTDROP_ERROR:message         → callback.onError(message)
-     *   BOTDROP_ALREADY_INSTALLED     → callback.onComplete()
+     *   CLAWPHONES_STEP:N:START:message  → callback.onStepStart(N, message)
+     *   CLAWPHONES_STEP:N:DONE           → callback.onStepComplete(N)
+     *   CLAWPHONES_COMPLETE              → callback.onComplete()
+     *   CLAWPHONES_ERROR:message         → callback.onError(message)
+     *   CLAWPHONES_ALREADY_INSTALLED     → callback.onComplete()
      */
     public void installOpenclaw(InstallProgressCallback callback) {
         final String INSTALL_SCRIPT = TermuxConstants.TERMUX_PREFIX_DIR_PATH + "/share/clawphones/install.sh";
@@ -274,10 +274,12 @@ public class ClawPhonesService extends Service {
      * Parse a single line of structured output from install.sh
      */
     private void parseInstallOutput(String line, InstallProgressCallback callback) {
-        if (line.startsWith("BOTDROP_STEP:")) {
-            // Format: BOTDROP_STEP:N:START:message or BOTDROP_STEP:N:DONE
-            String[] parts = line.split(":", 4);
-            if (parts.length >= 3) {
+        String trimmed = line.trim();
+
+        if (trimmed.contains("_STEP:")) {
+            // Format: <PREFIX>_STEP:N:START:message or <PREFIX>_STEP:N:DONE
+            String[] parts = trimmed.split(":", 4);
+            if (parts.length >= 3 && parts[0].endsWith("_STEP")) {
                 try {
                     int step = Integer.parseInt(parts[1]);
                     String action = parts[2];
@@ -291,14 +293,15 @@ public class ClawPhonesService extends Service {
                     Logger.logWarn(LOG_TAG, "Invalid step number in: " + line);
                 }
             }
-        } else if ("BOTDROP_COMPLETE".equals(line.trim())) {
+        } else if (trimmed.endsWith("_COMPLETE")) {
             Logger.logInfo(LOG_TAG, "Installation complete");
             mHandler.post(callback::onComplete);
-        } else if ("BOTDROP_ALREADY_INSTALLED".equals(line.trim())) {
+        } else if (trimmed.endsWith("_ALREADY_INSTALLED")) {
             Logger.logInfo(LOG_TAG, "Already installed, skipping");
             mHandler.post(callback::onComplete);
-        } else if (line.startsWith("BOTDROP_ERROR:")) {
-            String error = line.substring("BOTDROP_ERROR:".length());
+        } else if (trimmed.contains("_ERROR:")) {
+            int errorIdx = trimmed.indexOf("_ERROR:");
+            String error = trimmed.substring(errorIdx + "_ERROR:".length());
             mHandler.post(() -> callback.onError(error));
         }
         // Other lines (npm output, etc.) are logged but not parsed

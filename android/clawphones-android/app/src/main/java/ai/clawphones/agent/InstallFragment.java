@@ -196,9 +196,9 @@ public class InstallFragment extends Fragment {
                 // Get and display version
                 String version = ClawPhonesService.getOpenclawVersion();
                 if (version != null) {
-                    mStatusMessage.setText("Installation complete! (v" + version + ")");
+                    mStatusMessage.setText(getString(R.string.install_status_complete_with_version, version));
                 } else {
-                    mStatusMessage.setText("Installation complete!");
+                    mStatusMessage.setText(getString(R.string.install_status_complete));
                 }
 
                 // Auto-advance to next step after 1.5 seconds
@@ -246,14 +246,14 @@ public class InstallFragment extends Fragment {
     private void showError(String error) {
         mErrorMessage.setText(error);
         mErrorContainer.setVisibility(View.VISIBLE);
-        mStatusMessage.setText("Installation failed");
+        mStatusMessage.setText(getString(R.string.install_status_failed));
     }
 
     private void resetSteps() {
         mStep0Icon.setText("○");
         mStep1Icon.setText("○");
         mStep2Icon.setText("○");
-        mStatusMessage.setText("This takes about a minute");
+        mStatusMessage.setText(getString(R.string.install_status_about_one_minute));
         mInstallationStarted.set(false);
     }
 }

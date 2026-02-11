@@ -14,7 +14,7 @@ import java.lang.reflect.Method;
 /**
  * Factory/OEM provisioning helper.
  *
- * Goal: "傻瓜可用" (no API keys, no setup wizard). Read a per-device token from the OS,
+ * Goal: "zero-setup" (no API keys, no setup wizard). Read a per-device token from the OS,
  * write OpenClaw config automatically, and keep the app UI simple.
  *
  * Token source priority:

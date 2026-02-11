@@ -223,8 +223,8 @@ public final class TermuxInstaller {
 
                     Logger.logInfo(LOG_TAG, "Bootstrap packages installed successfully.");
 
-                    // Fix shebangs: bootstrap was built for app.botdrop but we are ai.clawphones.agent.
-                    // All script shebangs reference /data/data/app.botdrop/... which doesn't exist.
+                    // Fix shebangs: bootstrap was built for ai.clawphones.agent.
+                    // All script shebangs reference /data/data/ai.clawphones.agent/... when needed.
                     fixBootstrapShebangs(TERMUX_PREFIX_DIR);
                     Logger.logInfo(LOG_TAG, "Shebang paths patched.");
 
@@ -391,11 +391,11 @@ public final class TermuxInstaller {
 
     /**
      * Patch shebangs in all scripts under $PREFIX/bin/ and $PREFIX/lib/node_modules/.bin/
-     * to replace the old bootstrap package name (app.botdrop) with the actual package name.
-     * This is necessary because bootstrap zip was built for app.botdrop but we run as ai.clawphones.agent.
+     * to replace the old bootstrap package name (ai.clawphones.agent) with the actual package name.
+     * This is necessary when bootstrap zip package path differs from runtime package.
      */
     private static void fixBootstrapShebangs(File prefixDir) {
-        final String OLD_PREFIX = "/data/data/app.botdrop/";
+        final String OLD_PREFIX = "/data/data/ai.clawphones.agent/";
         final String NEW_PREFIX = "/data/data/" + TermuxConstants.TERMUX_PACKAGE_NAME + "/";
         if (OLD_PREFIX.equals(NEW_PREFIX)) return; // No patching needed if package matches
 
@@ -464,10 +464,10 @@ public final class TermuxInstaller {
      * 2. $PREFIX/etc/profile.d/clawphones-env.sh — environment (alias, sshd auto-start)
      *
      * The install.sh outputs structured lines for GUI parsing:
-     *   BOTDROP_STEP:N:START:message
-     *   BOTDROP_STEP:N:DONE
-     *   BOTDROP_COMPLETE
-     *   BOTDROP_ERROR:message
+     *   CLAWPHONES_STEP:N:START:message
+     *   CLAWPHONES_STEP:N:DONE
+     *   CLAWPHONES_COMPLETE
+     *   CLAWPHONES_ERROR:message
      */
     private static void createClawPhonesScripts() {
         try {
@@ -489,10 +489,10 @@ public final class TermuxInstaller {
                 "echo \"=== ClawPhones install started: $(date) ===\"\n\n" +
                 "MARKER=\"$HOME/.clawphones_installed\"\n\n" +
                 "if [ -f \"$MARKER\" ]; then\n" +
-                "    echo \"BOTDROP_ALREADY_INSTALLED\"\n" +
+                "    echo \"CLAWPHONES_ALREADY_INSTALLED\"\n" +
                 "    exit 0\n" +
                 "fi\n\n" +
-                "echo \"BOTDROP_STEP:0:START:Setting up environment\"\n" +
+                "echo \"CLAWPHONES_STEP:0:START:Setting up environment\"\n" +
                 "chmod +x $PREFIX/bin/* 2>/dev/null\n" +
                 "chmod +x $PREFIX/lib/node_modules/.bin/* 2>/dev/null\n" +
                 "chmod +x $PREFIX/lib/node_modules/npm/bin/* 2>/dev/null\n" +
@@ -519,26 +519,26 @@ public final class TermuxInstaller {
                 "if ! pgrep -x sshd >/dev/null 2>&1; then\n" +
                 "    sshd 2>/dev/null\n" +
                 "fi\n" +
-                "echo \"BOTDROP_STEP:0:DONE\"\n\n" +
-                "echo \"BOTDROP_STEP:1:START:Verifying Node.js\"\n" +
+                "echo \"CLAWPHONES_STEP:0:DONE\"\n\n" +
+                "echo \"CLAWPHONES_STEP:1:START:Verifying Node.js\"\n" +
                 "NODE_V=$(node --version 2>&1)\n" +
                 "NPM_V=$(npm --version 2>&1)\n" +
                 "if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then\n" +
-                "    echo \"BOTDROP_ERROR:Node.js or npm not found. Bootstrap may be corrupted.\"\n" +
+                "    echo \"CLAWPHONES_ERROR:Node.js or npm not found. Bootstrap may be corrupted.\"\n" +
                 "    exit 1\n" +
                 "fi\n" +
-                "echo \"BOTDROP_INFO:Node $NODE_V, npm $NPM_V\"\n" +
-                "echo \"BOTDROP_STEP:1:DONE\"\n\n" +
-                "echo \"BOTDROP_STEP:2:START:Installing OpenClaw\"\n" +
+                "echo \"CLAWPHONES_INFO:Node $NODE_V, npm $NPM_V\"\n" +
+                "echo \"CLAWPHONES_STEP:1:DONE\"\n\n" +
+                "echo \"CLAWPHONES_STEP:2:START:Installing OpenClaw\"\n" +
                 "rm -rf $PREFIX/lib/node_modules/openclaw 2>/dev/null\n" +
                 "NPM_OUTPUT=$(npm install -g openclaw@latest --ignore-scripts --force 2>&1)\n" +
                 "NPM_EXIT=$?\n" +
                 "if [ $NPM_EXIT -eq 0 ]; then\n" +
-                "    echo \"BOTDROP_STEP:2:DONE\"\n" +
+                "    echo \"CLAWPHONES_STEP:2:DONE\"\n" +
                 "    touch \"$MARKER\"\n" +
-                "    echo \"BOTDROP_COMPLETE\"\n" +
+                "    echo \"CLAWPHONES_COMPLETE\"\n" +
                 "else\n" +
-                "    echo \"BOTDROP_ERROR:npm install failed (exit $NPM_EXIT): $NPM_OUTPUT\"\n" +
+                "    echo \"CLAWPHONES_ERROR:npm install failed (exit $NPM_EXIT): $NPM_OUTPUT\"\n" +
                 "    exit 1\n" +
                 "fi\n";
 

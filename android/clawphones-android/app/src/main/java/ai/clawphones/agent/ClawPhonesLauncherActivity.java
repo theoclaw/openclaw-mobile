@@ -222,11 +222,11 @@ public class ClawPhonesLauncherActivity extends Activity {
             mNotificationStatus.setText("✓");
             mNotificationStatus.setVisibility(View.VISIBLE);
             mNotificationButton.setEnabled(false);
-            mNotificationButton.setText("已开启");
+            mNotificationButton.setText(R.string.launcher_permission_enabled);
         } else {
             mNotificationStatus.setVisibility(View.GONE);
             mNotificationButton.setEnabled(true);
-            mNotificationButton.setText("允许");
+            mNotificationButton.setText(R.string.launcher_permission_allow);
         }
 
         // Battery status
@@ -234,11 +234,11 @@ public class ClawPhonesLauncherActivity extends Activity {
             mBatteryStatus.setText("✓");
             mBatteryStatus.setVisibility(View.VISIBLE);
             mBatteryButton.setEnabled(false);
-            mBatteryButton.setText("已允许");
+            mBatteryButton.setText(R.string.launcher_battery_allowed);
         } else {
             mBatteryStatus.setVisibility(View.GONE);
             mBatteryButton.setEnabled(true);
-            mBatteryButton.setText("允许");
+            mBatteryButton.setText(R.string.launcher_permission_allow);
         }
 
         // Enable continue when both handled
@@ -251,7 +251,7 @@ public class ClawPhonesLauncherActivity extends Activity {
         // Check 1: Bootstrap installed?
         if (!ClawPhonesService.isBootstrapInstalled()) {
             Logger.logInfo(LOG_TAG, "Bootstrap not ready, waiting for TermuxInstaller");
-            mStatusText.setText("正在准备环境…");
+            mStatusText.setText(R.string.launcher_status_preparing);
 
             TermuxInstaller.setupBootstrapIfNeeded(this, this::checkAndRoute);
             return;
@@ -259,7 +259,7 @@ public class ClawPhonesLauncherActivity extends Activity {
 
         // Always route to preinstall flow (idempotent).
         Logger.logInfo(LOG_TAG, "Bootstrap ready, routing to PreinstallActivity");
-        mStatusText.setText("正在启动…");
+        mStatusText.setText(R.string.launcher_status_starting);
 
         Intent intent = new Intent(this, PreinstallActivity.class);
         startActivity(intent);

@@ -42,7 +42,7 @@ public class AuthFragment extends Fragment {
     private LinearLayout mMoreProvidersContainer;
     private TextView mMoreToggle;
     
-    // Auth input views (from fragment_botdrop_auth_input.xml)
+    // Auth input views (inflated from fragment_clawphones_auth_input.xml)
     private View mAuthInputView;
     private TextView mBackButton;
     private TextView mTitle;
@@ -262,10 +262,10 @@ public class AuthFragment extends Fragment {
         
         if (mMoreExpanded) {
             mMoreProvidersContainer.setVisibility(View.VISIBLE);
-            mMoreToggle.setText("More providers ▲");
+            mMoreToggle.setText(getString(R.string.auth_more_providers_expand));
         } else {
             mMoreProvidersContainer.setVisibility(View.GONE);
-            mMoreToggle.setText("More providers ▼");
+            mMoreToggle.setText(getString(R.string.auth_more_providers_collapse));
         }
     }
 
@@ -306,8 +306,8 @@ public class AuthFragment extends Fragment {
     }
 
     private void setupAPIKeyUI() {
-        mInputLabel.setText("API Key");
-        mInputField.setHint("Paste your API key here");
+        mInputLabel.setText(getString(R.string.auth_label_api_key));
+        mInputField.setHint(getString(R.string.auth_hint_api_key));
         mInputField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         
         String instructions = getAPIKeyInstructions(mSelectedProvider.getId());
@@ -318,53 +318,37 @@ public class AuthFragment extends Fragment {
     }
 
     private void setupSetupTokenUI() {
-        mInputLabel.setText("Setup Token");
-        mInputField.setHint("Paste your setup token here");
+        mInputLabel.setText(getString(R.string.auth_label_setup_token));
+        mInputField.setHint(getString(R.string.auth_hint_setup_token));
         mInputField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        
-        String instructions = "1. Open claude.ai/settings → \"Developer\" section\n" +
-                             "2. Find or create a \"Setup Token\"\n" +
-                             "3. Copy the token\n" +
-                             "4. Paste it below";
-        mInstructions.setText(instructions);
+
+        mInstructions.setText(getString(R.string.auth_setup_token_instructions));
 
         mInputFieldContainer.setVisibility(View.VISIBLE);
         mOAuthButton.setVisibility(View.GONE);
     }
 
     private void setupOAuthUI() {
-        String instructions = "Sign in with your " + mSelectedProvider.getName() + " account using OAuth.\n\n" +
-                             "This will open your browser to complete the login.";
+        String instructions = getString(R.string.auth_oauth_instructions, mSelectedProvider.getName());
         mInstructions.setText(instructions);
 
         mInputFieldContainer.setVisibility(View.GONE);
         mOAuthButton.setVisibility(View.VISIBLE);
-        mOAuthButton.setText("Open Browser to Sign In");
+        mOAuthButton.setText(getString(R.string.auth_oauth_button));
     }
 
     private String getAPIKeyInstructions(String providerId) {
         switch (providerId) {
             case "anthropic":
-                return "1. Go to console.anthropic.com\n" +
-                       "2. Navigate to API Keys section\n" +
-                       "3. Create a new API key\n" +
-                       "4. Copy and paste it below";
+                return getString(R.string.auth_api_instructions_anthropic);
             case "openai":
-                return "1. Go to platform.openai.com\n" +
-                       "2. Navigate to API Keys\n" +
-                       "3. Create a new secret key\n" +
-                       "4. Copy and paste it below";
+                return getString(R.string.auth_api_instructions_openai);
             case "google":
-                return "1. Go to aistudio.google.com\n" +
-                       "2. Get an API key\n" +
-                       "3. Copy and paste it below";
+                return getString(R.string.auth_api_instructions_google);
             case "openrouter":
-                return "1. Go to openrouter.ai\n" +
-                       "2. Sign in and get your API key\n" +
-                       "3. Copy and paste it below";
+                return getString(R.string.auth_api_instructions_openrouter);
             default:
-                return "1. Get your API key from " + mSelectedProvider.getName() + "\n" +
-                       "2. Copy and paste it below";
+                return getString(R.string.auth_api_instructions_default, mSelectedProvider.getName());
         }
     }
 
@@ -384,7 +368,7 @@ public class AuthFragment extends Fragment {
     private void handleOAuth() {
         Logger.logInfo(LOG_TAG, "OAuth requested for: " + mSelectedProvider.getId());
         
-        showStatus("OAuth flow not yet implemented.\n\nPlease use API Key method for now.", false);
+        showStatus(getString(R.string.auth_status_oauth_not_implemented), false);
         
         // TODO: Implement OAuth via openclaw CLI
     }
@@ -393,20 +377,20 @@ public class AuthFragment extends Fragment {
         String credential = mInputField.getText().toString().trim();
 
         if (TextUtils.isEmpty(credential)) {
-            showStatus("Please enter your " + mInputLabel.getText().toString().toLowerCase(), false);
+            showStatus(getString(R.string.auth_error_enter_credential, mInputLabel.getText().toString()), false);
             return;
         }
 
         // Basic format validation
         if (!validateCredentialFormat(credential)) {
-            showStatus("Invalid format. Please check and try again.", false);
+            showStatus(getString(R.string.auth_error_invalid_format), false);
             return;
         }
 
         // Show progress
         mVerifyButton.setEnabled(false);
-        mVerifyButton.setText("Verifying...");
-        showStatus("Verifying credentials...", true);
+        mVerifyButton.setText(getString(R.string.auth_button_verifying));
+        showStatus(getString(R.string.auth_status_verifying), true);
 
         // Save to config and verify
         saveCredentials(credential);
@@ -429,7 +413,7 @@ public class AuthFragment extends Fragment {
 
         if (keyWritten && providerWritten) {
             Logger.logInfo(LOG_TAG, "Auth configured successfully");
-            showStatus("✓ Connected!\nModel: " + providerId + "/" + model, true);
+            showStatus(getString(R.string.auth_status_connected_model, providerId, model), true);
 
             // Auto-advance after short delay
             // Track runnable so we can remove it in onDestroyView() if needed
@@ -442,7 +426,7 @@ public class AuthFragment extends Fragment {
             };
             mVerifyButton.postDelayed(mNavigationRunnable, 1500);
         } else {
-            showStatus("Failed to write config. Check app permissions.", false);
+            showStatus(getString(R.string.auth_error_write_config_failed), false);
             resetVerifyButton();
         }
     }
@@ -469,6 +453,6 @@ public class AuthFragment extends Fragment {
 
     private void resetVerifyButton() {
         mVerifyButton.setEnabled(true);
-        mVerifyButton.setText("Verify & Continue");
+        mVerifyButton.setText(getString(R.string.auth_button_verify_continue));
     }
 }

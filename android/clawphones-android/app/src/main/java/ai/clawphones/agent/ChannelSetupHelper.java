@@ -16,6 +16,7 @@ import org.json.JSONObject;
 public class ChannelSetupHelper {
 
     private static final String LOG_TAG = "ChannelSetupHelper";
+    private static final String SETUP_CODE_PREFIX = "CLAWPHONES";
 
     /**
      * Data extracted from setup code
@@ -34,7 +35,7 @@ public class ChannelSetupHelper {
 
     /**
      * Decode setup code from @ClawPhonesSetupBot
-     * Format: BOTDROP-{platform}-{base64_json}
+     * Format: CLAWPHONES-{platform}-{base64_json}
      * 
      * Platform codes:
      * - tg = Telegram
@@ -54,9 +55,9 @@ public class ChannelSetupHelper {
      */
     public static SetupCodeData decodeSetupCode(String setupCode) {
         try {
-            // Split: BOTDROP-tg-xxxxx or BOTDROP-dc-xxxxx
+            // Split: CLAWPHONES-tg-xxxxx or CLAWPHONES-dc-xxxxx
             String[] parts = setupCode.split("-", 3);
-            if (parts.length != 3 || !parts[0].equals("BOTDROP")) {
+            if (parts.length != 3 || !parts[0].equals(SETUP_CODE_PREFIX)) {
                 Logger.logError(LOG_TAG, "Invalid setup code format");
                 return null;
             }

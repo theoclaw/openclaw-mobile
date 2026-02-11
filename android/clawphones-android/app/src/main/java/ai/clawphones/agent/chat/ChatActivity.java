@@ -85,11 +85,11 @@ public class ChatActivity extends AppCompatActivity {
         if (toolbar != null) {
             setSupportActionBar(toolbar);
             String title = safeTrim(getIntent().getStringExtra("title"));
-            toolbar.setTitle(TextUtils.isEmpty(title) ? "新对话" : title);
+            toolbar.setTitle(TextUtils.isEmpty(title) ? getString(R.string.chat_new_conversation) : title);
             toolbar.setNavigationIcon(android.R.drawable.ic_menu_revert);
             toolbar.setNavigationOnClickListener(v -> finish());
 
-            MenuItem logoutItem = toolbar.getMenu().add("退出登录");
+            MenuItem logoutItem = toolbar.getMenu().add(getString(R.string.chat_menu_logout));
             logoutItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
             toolbar.setOnMenuItemClickListener(item -> {
                 confirmLogout();
@@ -115,7 +115,7 @@ public class ChatActivity extends AppCompatActivity {
             mConversationId = existingConversationId;
             loadHistory(existingConversationId);
         } else {
-            addAssistantMessage("你好！有什么我可以帮你的吗？");
+            addAssistantMessage(getString(R.string.chat_welcome_message));
             createConversation();
         }
 
@@ -187,7 +187,7 @@ public class ChatActivity extends AppCompatActivity {
                         ChatMessage.Role messageRole = "user".equalsIgnoreCase(role)
                             ? ChatMessage.Role.USER
                             : ChatMessage.Role.ASSISTANT;
-                        mMessages.add(new ChatMessage(messageRole, content));
+                        mMessages.add(new ChatMessage(messageRole, content, false));
                     }
                     mAdapter.notifyDataSetChanged();
                     scrollToBottom();
@@ -201,17 +201,17 @@ public class ChatActivity extends AppCompatActivity {
                 runSafe(() -> {
                     if (e.statusCode == 401) {
                         ClawPhonesAPI.clearToken(ChatActivity.this);
-                        redirectToLogin("登录已过期，请重新登录");
+                        redirectToLogin(getString(R.string.chat_login_expired));
                         return;
                     }
-                    toast("加载历史失败");
+                    toast(getString(R.string.chat_error_load_history));
                     mBusy = false;
                     setInputEnabled(true);
                 });
             } catch (IOException | JSONException e) {
                 CrashReporter.reportNonFatal(ChatActivity.this, e, "loading_history");
                 runSafe(() -> {
-                    toast("加载历史失败");
+                    toast(getString(R.string.chat_error_load_history));
                     mBusy = false;
                     setInputEnabled(true);
                 });
@@ -224,28 +224,28 @@ public class ChatActivity extends AppCompatActivity {
         mBusy = true;
         setInputEnabled(false);
 
-        final int idx = addAssistantMessage("正在连接…");
+        final int idx = addAssistantMessage(getString(R.string.chat_status_connecting));
 
         execSafe(() -> {
             try {
                 String id = ClawPhonesAPI.createConversation(mToken);
                 runSafe(() -> {
                     mConversationId = id;
-                    updateAssistantMessage(idx, "已连接，可以开始提问。");
+                    updateAssistantMessage(idx, getString(R.string.chat_status_connected_ready));
                     mBusy = false;
                     setInputEnabled(true);
                 });
             } catch (IOException e) {
                 CrashReporter.reportNonFatal(ChatActivity.this, e, "creating_conversation");
                 runSafe(() -> {
-                    updateAssistantMessage(idx, "网络错误: " + safeMsg(e));
+                    updateAssistantMessage(idx, getString(R.string.chat_error_network, safeMsg(e)));
                     mBusy = false;
                     setInputEnabled(true);
                 });
             } catch (JSONException e) {
                 CrashReporter.reportNonFatal(ChatActivity.this, e, "creating_conversation");
                 runSafe(() -> {
-                    updateAssistantMessage(idx, "数据解析错误");
+                    updateAssistantMessage(idx, getString(R.string.chat_error_parse_data));
                     mBusy = false;
                     setInputEnabled(true);
                 });
@@ -256,10 +256,10 @@ public class ChatActivity extends AppCompatActivity {
                 runSafe(() -> {
                     if (e.statusCode == 401) {
                         ClawPhonesAPI.clearToken(ChatActivity.this);
-                        redirectToLogin("登录已过期，请重新登录");
+                        redirectToLogin(getString(R.string.chat_login_expired));
                         return;
                     }
-                    updateAssistantMessage(idx, "连接失败: " + safeErr(e));
+                    updateAssistantMessage(idx, getString(R.string.chat_error_connect_failed, safeErr(e)));
                     mBusy = false;
                     setInputEnabled(true);
                 });
@@ -275,7 +275,7 @@ public class ChatActivity extends AppCompatActivity {
         if (TextUtils.isEmpty(text)) return;
 
         if (TextUtils.isEmpty(mConversationId)) {
-            toast("正在初始化对话，请稍等…");
+            toast(getString(R.string.chat_status_initializing));
             return;
         }
 
@@ -287,7 +287,7 @@ public class ChatActivity extends AppCompatActivity {
         setInputEnabled(false);
         setSendingState(true);
 
-        final int idx = addAssistantMessage("思考中...");
+        final int idx = addAssistantMessage(getString(R.string.chat_status_thinking), true);
 
         execSafe(() -> {
             final StringBuilder accumulated = new StringBuilder();
@@ -322,15 +322,16 @@ public class ChatActivity extends AppCompatActivity {
                         if (error instanceof ClawPhonesAPI.ApiException
                             && ((ClawPhonesAPI.ApiException) error).statusCode == 401) {
                             ClawPhonesAPI.clearToken(ChatActivity.this);
-                            redirectToLogin("登录已过期，请重新登录");
+                            redirectToLogin(getString(R.string.chat_login_expired));
                             return;
                         }
 
                         String partial = accumulated.toString();
                         if (!partial.isEmpty()) {
-                            updateAssistantMessage(idx, partial + "\n\n⚠️ 连接中断");
+                            updateAssistantMessage(idx,
+                                getString(R.string.chat_error_partial_interrupted, partial));
                         } else {
-                            updateAssistantMessage(idx, "⚠️ 发送失败");
+                            updateAssistantMessage(idx, getString(R.string.chat_error_send_failed));
                         }
                         mBusy = false;
                         setInputEnabled(true);
@@ -343,9 +344,9 @@ public class ChatActivity extends AppCompatActivity {
 
     private void confirmLogout() {
         new AlertDialog.Builder(this)
-            .setMessage("确定退出登录吗？")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("退出", (d, w) -> {
+            .setMessage(getString(R.string.chat_dialog_logout_confirm))
+            .setNegativeButton(getString(R.string.chat_action_cancel), null)
+            .setPositiveButton(getString(R.string.chat_action_logout), (d, w) -> {
                 ClawPhonesAPI.clearToken(ChatActivity.this);
                 redirectToLogin(null);
             })
@@ -384,15 +385,19 @@ public class ChatActivity extends AppCompatActivity {
 
     private int addUserMessage(String text) {
         int idx = mMessages.size();
-        mMessages.add(new ChatMessage(ChatMessage.Role.USER, text));
+        mMessages.add(new ChatMessage(ChatMessage.Role.USER, text, false));
         mAdapter.notifyItemInserted(idx);
         scrollToBottom();
         return idx;
     }
 
     private int addAssistantMessage(String text) {
+        return addAssistantMessage(text, false);
+    }
+
+    private int addAssistantMessage(String text, boolean isThinking) {
         int idx = mMessages.size();
-        mMessages.add(new ChatMessage(ChatMessage.Role.ASSISTANT, text));
+        mMessages.add(new ChatMessage(ChatMessage.Role.ASSISTANT, text, isThinking));
         mAdapter.notifyItemInserted(idx);
         scrollToBottom();
         return idx;
@@ -402,6 +407,7 @@ public class ChatActivity extends AppCompatActivity {
         if (index < 0 || index >= mMessages.size()) return;
         ChatMessage m = mMessages.get(index);
         m.text = text;
+        m.isThinking = false;
         mAdapter.notifyItemChanged(index);
         scrollToBottom();
     }
@@ -410,6 +416,7 @@ public class ChatActivity extends AppCompatActivity {
         if (index < 0 || index >= mMessages.size()) return;
         ChatMessage m = mMessages.get(index);
         m.text = text;
+        m.isThinking = false;
 
         long now = System.currentTimeMillis();
         long elapsed = now - mLastUpdateMs;
@@ -460,16 +467,18 @@ public class ChatActivity extends AppCompatActivity {
         return s.trim();
     }
 
-    private static String safeMsg(Exception e) {
+    private String safeMsg(Exception e) {
         String msg = e.getMessage();
-        if (msg == null || msg.trim().isEmpty()) return "未知错误";
+        if (msg == null || msg.trim().isEmpty()) return getString(R.string.chat_error_unknown);
         if (msg.length() > 200) msg = msg.substring(0, 200) + "…";
         return msg;
     }
 
-    private static String safeErr(ClawPhonesAPI.ApiException e) {
+    private String safeErr(ClawPhonesAPI.ApiException e) {
         String msg = e.getMessage();
-        if (msg == null || msg.trim().isEmpty()) return "HTTP " + e.statusCode;
+        if (msg == null || msg.trim().isEmpty()) {
+            return getString(R.string.chat_error_http_status, e.statusCode);
+        }
         try {
             org.json.JSONObject errJson = new org.json.JSONObject(msg);
             String detail = errJson.optString("detail", null);
@@ -500,10 +509,12 @@ public class ChatActivity extends AppCompatActivity {
 
         final Role role;
         String text;
+        boolean isThinking;
 
-        ChatMessage(Role role, String text) {
+        ChatMessage(Role role, String text, boolean isThinking) {
             this.role = role;
             this.text = text;
+            this.isThinking = isThinking;
         }
     }
 
@@ -535,7 +546,7 @@ public class ChatActivity extends AppCompatActivity {
         public void onBindViewHolder(@NonNull VH holder, int position) {
             ChatMessage m = messages.get(position);
             boolean isUser = m.role == ChatMessage.Role.USER;
-            boolean isThinking = !isUser && "思考中...".equals(m.text);
+            boolean isThinking = !isUser && m.isThinking;
             holder.bind(m.text, isUser, isThinking);
         }
 
@@ -560,7 +571,7 @@ public class ChatActivity extends AppCompatActivity {
             void bind(String markdown, boolean isUser, boolean isThinking) {
                 if (text != null) {
                     if (isThinking) {
-                        text.setText("思考中...");
+                        text.setText(markdown);
                         text.setTypeface(null, Typeface.ITALIC);
                         text.setTextColor(0xFF888888);
                     } else {

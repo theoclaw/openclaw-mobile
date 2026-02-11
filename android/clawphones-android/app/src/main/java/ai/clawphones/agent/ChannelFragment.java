@@ -121,35 +121,35 @@ public class ChannelFragment extends Fragment {
 
         // Validate inputs
         if (TextUtils.isEmpty(token)) {
-            showError("Please enter your bot token");
+            showError(getString(R.string.channel_error_enter_bot_token));
             return;
         }
 
         if (TextUtils.isEmpty(userId)) {
-            showError("Please enter your User ID");
+            showError(getString(R.string.channel_error_enter_user_id));
             return;
         }
 
         // Basic token format validation (Telegram bot tokens are like "123456789:ABC-DEF...")
         if (!token.matches("^\\d+:[A-Za-z0-9_-]+$")) {
-            showError("Invalid bot token format");
+            showError(getString(R.string.channel_error_invalid_bot_token_format));
             return;
         }
 
         // Basic User ID validation (should be numeric)
         if (!userId.matches("^\\d+$")) {
-            showError("Invalid User ID format (should be numeric)");
+            showError(getString(R.string.channel_error_invalid_user_id_format));
             return;
         }
 
         // Disable button during processing
         mConnectButton.setEnabled(false);
-        mConnectButton.setText("Connecting...");
+        mConnectButton.setText(getString(R.string.channel_button_connecting));
 
         // Write channel config (Telegram)
         boolean success = ChannelSetupHelper.writeChannelConfig("telegram", token, userId);
         if (!success) {
-            showError("Failed to write configuration");
+            showError(getString(R.string.channel_error_write_config_failed));
             resetButton();
             return;
         }
@@ -160,7 +160,7 @@ public class ChannelFragment extends Fragment {
 
     private void startGateway() {
         if (!mBound || mService == null) {
-            showError("Service not ready, please try again");
+            showError(getString(R.string.channel_error_service_not_ready));
             resetButton();
             return;
         }
@@ -181,7 +181,7 @@ public class ChannelFragment extends Fragment {
                 
                 if (result.success) {
                     Logger.logInfo(LOG_TAG, "Gateway started successfully");
-                    Toast.makeText(requireContext(), "Connected! Gateway is starting...", Toast.LENGTH_LONG).show();
+                    Toast.makeText(requireContext(), getString(R.string.channel_toast_connected_starting), Toast.LENGTH_LONG).show();
 
                     // Setup complete, advance to next step
                     SetupActivity activity = (SetupActivity) getActivity();
@@ -196,10 +196,10 @@ public class ChannelFragment extends Fragment {
                         errorMsg = result.stdout;
                     }
                     if (TextUtils.isEmpty(errorMsg)) {
-                        errorMsg = "Unknown error (exit code: " + result.exitCode + ")";
+                        errorMsg = getString(R.string.channel_error_unknown_with_exit_code, result.exitCode);
                     }
                     
-                    showError("Failed to start gateway: " + errorMsg);
+                    showError(getString(R.string.channel_error_start_gateway, errorMsg));
                     resetButton();
                 }
             });
@@ -213,6 +213,6 @@ public class ChannelFragment extends Fragment {
 
     private void resetButton() {
         mConnectButton.setEnabled(true);
-        mConnectButton.setText("Connect & Start");
+        mConnectButton.setText(getString(R.string.channel_button_connect_start));
     }
 }

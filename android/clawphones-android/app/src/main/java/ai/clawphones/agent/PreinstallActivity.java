@@ -20,7 +20,7 @@ import com.termux.app.TermuxInstaller;
 import com.termux.shared.logger.Logger;
 
 /**
- * "傻瓜可用" 预装引导：自动安装 OpenClaw + 自动写配置 + 自动启动 gateway。
+ * "Zero-setup" preinstall flow: auto install OpenClaw, write config, and start gateway.
  *
  * This screen should be the only thing users see before they can talk.
  */
@@ -112,14 +112,14 @@ public class PreinstallActivity extends Activity {
     private void runFlow() {
         // 0) Ensure bootstrap extracted
         if (!ClawPhonesService.isBootstrapInstalled()) {
-            setStatus("正在初始化环境…");
+            setStatus(getString(R.string.preinstall_status_initializing));
             TermuxInstaller.setupBootstrapIfNeeded(this, this::runFlow);
             return;
         }
 
         // 1) Ensure OpenClaw installed
         if (!ClawPhonesService.isOpenclawInstalled()) {
-            setStatus("正在安装（约 1-3 分钟）…");
+            setStatus(getString(R.string.preinstall_status_installing));
             mService.installOpenclaw(new ClawPhonesService.InstallProgressCallback() {
                 @Override
                 public void onStepStart(int step, String message) {
@@ -134,7 +134,7 @@ public class PreinstallActivity extends Activity {
                 @Override
                 public void onError(String error) {
                     Logger.logError(LOG_TAG, "Install failed: " + error);
-                    showError("安装失败。\n\n" + error);
+                    showError(getString(R.string.preinstall_error_install_failed, error));
                 }
 
                 @Override
@@ -147,19 +147,19 @@ public class PreinstallActivity extends Activity {
         }
 
         // 2) Ensure config provisioned (device_token -> env + model).
-        setStatus("正在激活…");
+        setStatus(getString(R.string.preinstall_status_activating));
         boolean provisioned = PreinstallProvisioner.ensureProvisioned(this);
         if (!provisioned) {
-            showError("缺少出厂 Token。\n\n工厂需要写入系统属性：persist.oyster.device_token\n（调试：也可以写入 app 私有文件 device_token.txt）");
+            showError(getString(R.string.preinstall_error_missing_device_token));
             return;
         }
 
         // 3) Start gateway (best effort; agent CLI can fallback to embedded if needed).
-        setStatus("正在启动…");
+        setStatus(getString(R.string.preinstall_status_starting));
         mService.startGateway(result -> {
             if (!result.success) {
                 Logger.logError(LOG_TAG, "Gateway start failed: " + result.stdout);
-                showError("启动失败。\n\n" + result.stdout);
+                showError(getString(R.string.preinstall_error_start_failed, result.stdout));
                 return;
             }
 

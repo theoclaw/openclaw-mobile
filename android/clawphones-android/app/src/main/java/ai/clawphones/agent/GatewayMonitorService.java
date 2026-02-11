@@ -47,7 +47,7 @@ public class GatewayMonitorService extends Service {
     private ClawPhonesService mClawPhonesService;
     private boolean mClawPhonesServiceBound = false;
     private boolean mIsMonitoring = false;
-    private String mCurrentStatus = "Starting...";
+    private String mCurrentStatus = "";
     private int mRestartAttempts = 0;
 
     /**
@@ -79,6 +79,7 @@ public class GatewayMonitorService extends Service {
     public void onCreate() {
         super.onCreate();
         Logger.logInfo(LOG_TAG, "Service created");
+        mCurrentStatus = getString(R.string.gateway_monitor_status_starting);
 
         // Bind to ClawPhonesService for command execution
         Intent intent = new Intent(this, ClawPhonesService.class);
@@ -102,7 +103,7 @@ public class GatewayMonitorService extends Service {
         Logger.logInfo(LOG_TAG, "Service started");
 
         // Start foreground service with notification
-        Notification notification = buildNotification("ClawPhones is running");
+        Notification notification = buildNotification(getString(R.string.gateway_monitor_notification_running));
         startForeground(NOTIFICATION_ID, notification);
 
         // Monitoring will start automatically when ClawPhonesService is bound
@@ -202,11 +203,11 @@ public class GatewayMonitorService extends Service {
                     if (isRunning) {
                         // Gateway is running - reset restart counter and update status
                         mRestartAttempts = 0;
-                        updateStatus("Running");
+                        updateStatus(getString(R.string.gateway_monitor_status_running));
                     } else {
                         // Gateway is not running - restart it
                         Logger.logInfo(LOG_TAG, "Gateway is not running, attempting restart");
-                        updateStatus("Restarting...");
+                        updateStatus(getString(R.string.gateway_monitor_status_restarting));
                         restartGateway();
                     }
                 } catch (Exception e) {
@@ -231,7 +232,7 @@ public class GatewayMonitorService extends Service {
         // Check if we've exceeded max restart attempts
         if (mRestartAttempts >= MAX_RESTART_ATTEMPTS) {
             Logger.logError(LOG_TAG, "Max restart attempts (" + MAX_RESTART_ATTEMPTS + ") reached");
-            updateStatus("Failed - manual restart required");
+            updateStatus(getString(R.string.gateway_monitor_status_failed_manual));
             return;
         }
 
@@ -244,10 +245,15 @@ public class GatewayMonitorService extends Service {
                     if (result.success) {
                         Logger.logInfo(LOG_TAG, "Gateway started successfully");
                         mRestartAttempts = 0; // Reset on success
-                        mHandler.postDelayed(() -> updateStatus("Running"), RESTART_DELAY_MS);
+                        mHandler.postDelayed(
+                            () -> updateStatus(getString(R.string.gateway_monitor_status_running)),
+                            RESTART_DELAY_MS);
                     } else {
                         Logger.logError(LOG_TAG, "Failed to start gateway: " + result.stderr);
-                        updateStatus("Failed (attempt " + mRestartAttempts + "/" + MAX_RESTART_ATTEMPTS + ")");
+                        updateStatus(getString(
+                            R.string.gateway_monitor_status_failed_attempt,
+                            mRestartAttempts,
+                            MAX_RESTART_ATTEMPTS));
                         
                         // Try again after delay if we haven't hit the limit
                         if (mRestartAttempts < MAX_RESTART_ATTEMPTS) {
@@ -268,7 +274,7 @@ public class GatewayMonitorService extends Service {
      */
     private void updateStatus(String status) {
         mCurrentStatus = status;
-        Notification notification = buildNotification("Gateway: " + status);
+        Notification notification = buildNotification(getString(R.string.gateway_monitor_notification_status, status));
         
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
@@ -296,7 +302,7 @@ public class GatewayMonitorService extends Service {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(
             this, DashboardActivity.NOTIFICATION_CHANNEL_ID
         )
-            .setContentTitle("ClawPhones")
+            .setContentTitle(getString(R.string.application_name))
             .setContentText(contentText)
             .setSmallIcon(R.drawable.ic_service_notification)
             .setContentIntent(pendingIntent)

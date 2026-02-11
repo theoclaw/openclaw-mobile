@@ -171,10 +171,10 @@ public class DashboardActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
-                "ClawPhones Gateway",
+                getString(R.string.dashboard_notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("Shows when ClawPhones is running");
+            channel.setDescription(getString(R.string.dashboard_notification_channel_desc));
             channel.setShowBadge(false);
 
             NotificationManager manager = getSystemService(NotificationManager.class);
@@ -229,7 +229,7 @@ public class DashboardActivity extends Activity {
                     if (uptimeResult.success) {
                         String uptime = uptimeResult.stdout.trim();
                         if (!uptime.equals("—")) {
-                            mUptimeText.setText("Uptime: " + uptime);
+                            mUptimeText.setText(getString(R.string.dashboard_uptime, uptime));
                         } else {
                             mUptimeText.setText("—");
                         }
@@ -244,13 +244,13 @@ public class DashboardActivity extends Activity {
      */
     private void updateStatusUI(boolean isRunning) {
         if (isRunning) {
-            mStatusText.setText("Gateway Running");
+            mStatusText.setText(getString(R.string.dashboard_status_running));
             mStatusIndicator.setBackgroundResource(R.drawable.status_indicator_running);
             setButtonState(mStartButton, false, true);
             setButtonState(mStopButton, true, false);
             setButtonState(mRestartButton, true, true);
         } else {
-            mStatusText.setText("Gateway Stopped");
+            mStatusText.setText(getString(R.string.dashboard_status_stopped));
             mStatusIndicator.setBackgroundResource(R.drawable.status_indicator_stopped);
             mUptimeText.setText("—");
             setButtonState(mStartButton, true, true);
@@ -271,7 +271,7 @@ public class DashboardActivity extends Activity {
     }
 
     private void showUpdateBanner(String latestVersion, String downloadUrl) {
-        mUpdateBannerText.setText("Update available: v" + latestVersion);
+        mUpdateBannerText.setText(getString(R.string.dashboard_update_available, latestVersion));
         mUpdateBanner.setVisibility(View.VISIBLE);
 
         findViewById(R.id.btn_update_download).setOnClickListener(v -> {
@@ -296,19 +296,19 @@ public class DashboardActivity extends Activity {
 
                 // Check Telegram
                 if (channels.has("telegram")) {
-                    mTelegramStatus.setText("● Connected");
+                    mTelegramStatus.setText(getString(R.string.dashboard_channel_connected));
                     mTelegramStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
                 } else {
-                    mTelegramStatus.setText("○ —");
+                    mTelegramStatus.setText(getString(R.string.dashboard_channel_disconnected));
                     mTelegramStatus.setTextColor(ContextCompat.getColor(this, R.color.status_disconnected));
                 }
 
                 // Check Discord
                 if (channels.has("discord")) {
-                    mDiscordStatus.setText("● Connected");
+                    mDiscordStatus.setText(getString(R.string.dashboard_channel_connected));
                     mDiscordStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
                 } else {
-                    mDiscordStatus.setText("○ —");
+                    mDiscordStatus.setText(getString(R.string.dashboard_channel_disconnected));
                     mDiscordStatus.setTextColor(ContextCompat.getColor(this, R.color.status_disconnected));
                 }
             }
@@ -325,15 +325,15 @@ public class DashboardActivity extends Activity {
             return;
         }
 
-        Toast.makeText(this, "Starting gateway...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, getString(R.string.dashboard_toast_starting_gateway), Toast.LENGTH_SHORT).show();
         mStartButton.setEnabled(false);
 
         mClawPhonesService.startGateway(result -> {
             if (result.success) {
-                Toast.makeText(this, "Gateway started", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, getString(R.string.dashboard_toast_gateway_started), Toast.LENGTH_SHORT).show();
                 refreshStatus();
             } else {
-                Toast.makeText(this, "Failed to start gateway", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, getString(R.string.dashboard_toast_start_gateway_failed), Toast.LENGTH_SHORT).show();
                 mStartButton.setEnabled(true);
                 Logger.logError(LOG_TAG, "Start failed: " + result.stderr);
             }
@@ -348,15 +348,15 @@ public class DashboardActivity extends Activity {
             return;
         }
 
-        Toast.makeText(this, "Stopping gateway...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, getString(R.string.dashboard_toast_stopping_gateway), Toast.LENGTH_SHORT).show();
         mStopButton.setEnabled(false);
 
         mClawPhonesService.stopGateway(result -> {
             if (result.success) {
-                Toast.makeText(this, "Gateway stopped", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, getString(R.string.dashboard_toast_gateway_stopped), Toast.LENGTH_SHORT).show();
                 refreshStatus();
             } else {
-                Toast.makeText(this, "Failed to stop gateway", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, getString(R.string.dashboard_toast_stop_gateway_failed), Toast.LENGTH_SHORT).show();
                 mStopButton.setEnabled(true);
                 Logger.logError(LOG_TAG, "Stop failed: " + result.stderr);
             }
@@ -371,15 +371,15 @@ public class DashboardActivity extends Activity {
             return;
         }
 
-        Toast.makeText(this, "Restarting gateway...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, getString(R.string.dashboard_toast_restarting_gateway), Toast.LENGTH_SHORT).show();
         mRestartButton.setEnabled(false);
 
         mClawPhonesService.restartGateway(result -> {
             if (result.success) {
-                Toast.makeText(this, "Gateway restarted", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, getString(R.string.dashboard_toast_gateway_restarted), Toast.LENGTH_SHORT).show();
                 refreshStatus();
             } else {
-                Toast.makeText(this, "Failed to restart gateway", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, getString(R.string.dashboard_toast_restart_gateway_failed), Toast.LENGTH_SHORT).show();
                 mRestartButton.setEnabled(true);
                 Logger.logError(LOG_TAG, "Restart failed: " + result.stderr);
             }
@@ -391,13 +391,13 @@ public class DashboardActivity extends Activity {
      */
     private void loadSshInfo() {
         String ip = getDeviceIp();
-        if (ip == null) ip = "<device-ip>";
+        if (ip == null) ip = getString(R.string.dashboard_device_ip_placeholder);
 
         // Read SSH password from file
         String password = readSshPassword();
-        if (password == null) password = "<not set>";
+        if (password == null) password = getString(R.string.dashboard_password_not_set);
 
-        mSshInfoText.setText("ssh -p 8022 " + ip + "\nPassword: " + password);
+        mSshInfoText.setText(getString(R.string.dashboard_ssh_info, ip, password));
         mSshCard.setVisibility(View.VISIBLE);
     }
 
