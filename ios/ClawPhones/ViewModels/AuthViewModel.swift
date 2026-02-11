@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AuthenticationServices
 
 @MainActor
 final class AuthViewModel: ObservableObject {
@@ -62,13 +63,35 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    func loginWithApple(identityToken: String) async {
+    func loginWithApple(credential: ASAuthorizationAppleIDCredential) async {
+        guard let tokenData = credential.identityToken,
+              let identityToken = String(data: tokenData, encoding: .utf8),
+              !identityToken.isEmpty else {
+            errorMessage = "无法读取 Apple 身份令牌，请重试。"
+            return
+        }
+
+        let fullName = formattedName(from: credential.fullName)
+        await loginWithApple(
+            identityToken: identityToken,
+            userIdentifier: credential.user,
+            email: credential.email,
+            fullName: fullName
+        )
+    }
+
+    func loginWithApple(identityToken: String, userIdentifier: String, email: String?, fullName: String?) async {
         errorMessage = nil
         isLoading = true
         defer { isLoading = false }
 
         do {
-            let payload = try await OpenClawAPI.shared.loginWithApple(identityToken: identityToken)
+            let payload = try await OpenClawAPI.shared.loginWithApple(
+                identityToken: identityToken,
+                userIdentifier: userIdentifier,
+                email: email,
+                fullName: fullName
+            )
             DeviceConfig.shared.saveUserToken(payload.token, expiresAt: payload.expiresAt)
             isAuthenticated = true
         } catch {
@@ -82,5 +105,11 @@ final class AuthViewModel: ObservableObject {
         isLoading = false
         errorMessage = nil
         isAuthenticated = false
+    }
+
+    private func formattedName(from components: PersonNameComponents?) -> String? {
+        guard let components else { return nil }
+        let formatted = PersonNameComponentsFormatter().string(from: components).trimmingCharacters(in: .whitespacesAndNewlines)
+        return formatted.isEmpty ? nil : formatted
     }
 }

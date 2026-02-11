@@ -3,6 +3,7 @@
 //  ClawPhones
 //
 
+import Network
 import SwiftUI
 
 @MainActor
@@ -11,8 +12,15 @@ final class ChatViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     @Published var conversationTitle: String?
+    @Published private(set) var isOnline: Bool = true
 
     private(set) var conversationId: String?
+
+    private let queueStore = MessageQueue.shared
+    private let cacheStore = ConversationCache.shared
+    private let pathMonitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "ai.clawphones.network-monitor")
+    private var isFlushingQueue = false
 
     static let defaultSystemPrompt = """
     你是 ClawPhones AI 助手，由 Oyster Labs 开发。你聪明、友好、高效。
@@ -23,6 +31,19 @@ final class ChatViewModel: ObservableObject {
 
     init(conversationId: String? = nil) {
         self.conversationId = conversationId
+        if let conversationId, !conversationId.isEmpty {
+            restoreQueuedMessages(for: conversationId)
+        } else {
+            let pending = queueStore.listWithoutConversation()
+            for item in pending {
+                upsertQueuedUserMessage(item)
+            }
+        }
+        configureNetworkMonitor()
+    }
+
+    deinit {
+        pathMonitor.cancel()
     }
 
     func startNewConversation() async {
@@ -37,6 +58,20 @@ final class ChatViewModel: ObservableObject {
             conversationId = conversation.id
             conversationTitle = conversation.title ?? "New Chat"
             messages = []
+
+            queueStore.assignConversationIdToEmpty(conversation.id)
+            restoreQueuedMessages(for: conversation.id)
+            let now = Int(Date().timeIntervalSince1970)
+            await cacheStore.upsertConversation(
+                id: conversation.id,
+                title: conversation.title,
+                createdAt: conversation.createdAt,
+                updatedAt: conversation.createdAt > 0 ? conversation.createdAt : now,
+                lastMessage: nil,
+                messageCount: 0
+            )
+            await cacheStore.replaceMessages(conversationId: conversation.id, messages: [])
+            await flushPendingMessages()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -44,6 +79,17 @@ final class ChatViewModel: ObservableObject {
 
     func loadConversation(id: String) async {
         errorMessage = nil
+
+        let cachedMessages = await cacheStore.loadMessages(conversationId: id)
+        if !cachedMessages.isEmpty {
+            messages = cachedMessages
+            conversationId = id
+        }
+        let cachedConversations = await cacheStore.loadConversations()
+        if let cachedSummary = cachedConversations.first(where: { $0.id == id }) {
+            conversationTitle = cachedSummary.title ?? conversationTitle ?? "Untitled"
+        }
+
         isLoading = true
         defer { isLoading = false }
 
@@ -52,23 +98,45 @@ final class ChatViewModel: ObservableObject {
             conversationId = detail.id
             conversationTitle = detail.title ?? "Untitled"
             messages = detail.messages
+
+            let latestTs = detail.messages.last?.createdAt ?? detail.createdAt
+            let lastMessage = detail.messages.last?.content
+            await cacheStore.upsertConversation(
+                id: detail.id,
+                title: detail.title,
+                createdAt: detail.createdAt,
+                updatedAt: latestTs,
+                lastMessage: lastMessage,
+                messageCount: detail.messages.count
+            )
+            await cacheStore.replaceMessages(conversationId: detail.id, messages: detail.messages)
+            restoreQueuedMessages(for: id)
+            await flushPendingMessages()
         } catch {
-            errorMessage = error.localizedDescription
+            if messages.isEmpty {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
     func sendMessage(text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-
         guard !isLoading else { return }
+
         errorMessage = nil
+
+        if !isOnline {
+            queueMessageForLater(trimmed)
+            return
+        }
 
         if conversationId == nil {
             await startNewConversation()
         }
 
         guard let cid = conversationId else {
+            queueMessageForLater(trimmed)
             return
         }
 
@@ -79,11 +147,20 @@ final class ChatViewModel: ObservableObject {
         let placeholderId = UUID().uuidString
         let placeholder = Message(id: placeholderId, role: .assistant, content: "", createdAt: now)
         messages.append(placeholder)
+        await persistCacheSnapshot(conversationId: cid)
 
         isLoading = true
         defer { isLoading = false }
 
-        await streamOrFallbackChat(conversationId: cid, prompt: trimmed, placeholderId: placeholderId)
+        let success = await streamOrFallbackChat(
+            conversationId: cid,
+            prompt: trimmed,
+            placeholderId: placeholderId
+        )
+
+        if !success && !isOnline {
+            queueExistingUserMessage(messageId: userMessage.id, text: trimmed, conversationId: cid)
+        }
     }
 
     func regenerateAssistantMessage(messageId: String) async {
@@ -103,16 +180,229 @@ final class ChatViewModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        await streamOrFallbackChat(conversationId: cid, prompt: prompt, placeholderId: placeholderId)
+        _ = await streamOrFallbackChat(conversationId: cid, prompt: prompt, placeholderId: placeholderId)
     }
 
     func deleteMessage(messageId: String) {
         messages.removeAll { $0.id == messageId }
+        persistCacheSnapshotIfPossible()
+    }
+
+    func retryQueuedMessage(messageId: String) {
+        guard let index = messages.firstIndex(where: { $0.id == messageId }) else { return }
+        let message = messages[index]
+        guard let queueId = message.localQueueId else { return }
+
+        guard isOnline else {
+            errorMessage = "当前离线，请联网后重试"
+            return
+        }
+
+        queueStore.resetForManualRetry(id: queueId)
+        setQueuedMessageState(queueId: queueId, state: .sending, retryCount: 0)
+
+        Task { [weak self] in
+            await self?.flushPendingMessages()
+        }
+    }
+
+    // MARK: - Queue / Network
+
+    private func configureNetworkMonitor() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                guard let self else { return }
+                let online = path.status == .satisfied
+                self.isOnline = online
+                if online {
+                    await self.flushPendingMessages()
+                }
+            }
+        }
+        pathMonitor.start(queue: monitorQueue)
+    }
+
+    private func queueMessageForLater(_ text: String) {
+        let pending = queueStore.enqueue(message: text, conversationId: conversationId)
+        upsertQueuedUserMessage(pending)
+        persistCacheSnapshotIfPossible()
+    }
+
+    private func queueExistingUserMessage(messageId: String, text: String, conversationId: String?) {
+        let pending = queueStore.enqueue(message: text, conversationId: conversationId)
+        if let index = messages.firstIndex(where: { $0.id == messageId }) {
+            let current = messages[index]
+            messages[index] = Message(
+                id: current.id,
+                role: current.role,
+                content: current.content,
+                createdAt: current.createdAt,
+                deliveryState: .sending,
+                localQueueId: pending.id,
+                retryCount: 0
+            )
+            persistCacheSnapshotIfPossible()
+            return
+        }
+        upsertQueuedUserMessage(pending)
+        persistCacheSnapshotIfPossible()
+    }
+
+    private func restoreQueuedMessages(for conversationId: String) {
+        let pending = queueStore.list(for: conversationId)
+        for item in pending {
+            upsertQueuedUserMessage(item)
+        }
+    }
+
+    private func upsertQueuedUserMessage(_ pending: MessageQueue.PendingMessage) {
+        let deliveryState: Message.DeliveryState = {
+            switch pending.status {
+            case .failed:
+                return .failed
+            case .pending, .sending:
+                return .sending
+            }
+        }()
+
+        if let index = messages.firstIndex(where: { $0.localQueueId == pending.id }) {
+            let current = messages[index]
+            messages[index] = Message(
+                id: current.id,
+                role: .user,
+                content: pending.message,
+                createdAt: current.createdAt,
+                deliveryState: deliveryState,
+                localQueueId: pending.id,
+                retryCount: pending.retryCount
+            )
+            return
+        }
+
+        let localMessage = Message(
+            id: "queued-\(pending.id)",
+            role: .user,
+            content: pending.message,
+            createdAt: pending.createdAt,
+            deliveryState: deliveryState,
+            localQueueId: pending.id,
+            retryCount: pending.retryCount
+        )
+        messages.append(localMessage)
+    }
+
+    private func setQueuedMessageState(queueId: String, state: Message.DeliveryState, retryCount: Int) {
+        guard let index = messages.firstIndex(where: { $0.localQueueId == queueId }) else { return }
+        let current = messages[index]
+        messages[index] = Message(
+            id: current.id,
+            role: current.role,
+            content: current.content,
+            createdAt: current.createdAt,
+            deliveryState: state,
+            localQueueId: queueId,
+            retryCount: max(0, retryCount)
+        )
+        persistCacheSnapshotIfPossible()
+    }
+
+    private func markQueuedMessageSent(queueId: String) {
+        guard let index = messages.firstIndex(where: { $0.localQueueId == queueId }) else { return }
+        let current = messages[index]
+        messages[index] = Message(
+            id: current.id,
+            role: current.role,
+            content: current.content,
+            createdAt: current.createdAt,
+            deliveryState: .sent,
+            localQueueId: nil,
+            retryCount: 0
+        )
+        persistCacheSnapshotIfPossible()
+    }
+
+    private func flushPendingMessages() async {
+        guard isOnline else { return }
+        guard !isFlushingQueue else { return }
+        isFlushingQueue = true
+        defer { isFlushingQueue = false }
+
+        while isOnline {
+            guard var pending = queueStore.nextPending(for: conversationId) else { return }
+
+            var targetConversationId = pending.conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
+            if targetConversationId.isEmpty {
+                if let existing = conversationId, !existing.isEmpty {
+                    targetConversationId = existing
+                } else {
+                    do {
+                        let conversation = try await OpenClawAPI.shared.createConversation(
+                            systemPrompt: Self.defaultSystemPrompt
+                        )
+                        conversationId = conversation.id
+                        conversationTitle = conversation.title ?? "New Chat"
+                        targetConversationId = conversation.id
+                        let now = Int(Date().timeIntervalSince1970)
+                        await cacheStore.upsertConversation(
+                            id: conversation.id,
+                            title: conversation.title,
+                            createdAt: conversation.createdAt,
+                            updatedAt: conversation.createdAt > 0 ? conversation.createdAt : now,
+                            lastMessage: nil,
+                            messageCount: 0
+                        )
+                    } catch {
+                        return
+                    }
+                }
+                queueStore.updateConversationId(id: pending.id, conversationId: targetConversationId)
+                queueStore.assignConversationIdToEmpty(targetConversationId)
+                pending.conversationId = targetConversationId
+            }
+
+            queueStore.markSending(id: pending.id)
+            pending.status = .sending
+            upsertQueuedUserMessage(pending)
+
+            let success = await sendQueuedPendingMessage(
+                pendingId: pending.id,
+                conversationId: targetConversationId,
+                prompt: pending.message
+            )
+            if success {
+                queueStore.remove(id: pending.id)
+                markQueuedMessageSent(queueId: pending.id)
+                continue
+            }
+
+            let retryCount = queueStore.incrementRetryCount(id: pending.id)
+            if retryCount >= 3 {
+                queueStore.markFailed(id: pending.id)
+                setQueuedMessageState(queueId: pending.id, state: .failed, retryCount: retryCount)
+                continue
+            }
+
+            queueStore.markPending(id: pending.id)
+            setQueuedMessageState(queueId: pending.id, state: .sending, retryCount: retryCount)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+    }
+
+    private func sendQueuedPendingMessage(pendingId: String, conversationId: String, prompt: String) async -> Bool {
+        let now = Int(Date().timeIntervalSince1970)
+        let placeholderId = "queue-assistant-\(pendingId)-\(UUID().uuidString)"
+        let placeholder = Message(id: placeholderId, role: .assistant, content: "", createdAt: now)
+        messages.append(placeholder)
+        return await streamOrFallbackChat(
+            conversationId: conversationId,
+            prompt: prompt,
+            placeholderId: placeholderId
+        )
     }
 
     // MARK: - Streaming Helpers
 
-    private func streamOrFallbackChat(conversationId: String, prompt: String, placeholderId: String) async {
+    private func streamOrFallbackChat(conversationId: String, prompt: String, placeholderId: String) async -> Bool {
         var content = ""
         var didReceiveAnyChunk = false
 
@@ -127,7 +417,8 @@ final class ChatViewModel: ObservableObject {
                     let now = Int(Date().timeIntervalSince1970)
                     let finalMessage = Message(id: finalId, role: .assistant, content: finalContent, createdAt: now)
                     replaceMessage(id: placeholderId, with: finalMessage)
-                    return
+                    await persistCacheSnapshot(conversationId: conversationId)
+                    return true
                 }
 
                 if !chunk.delta.isEmpty {
@@ -137,18 +428,17 @@ final class ChatViewModel: ObservableObject {
             }
 
             if didReceiveAnyChunk {
-                updateMessageContent(id: placeholderId, content: content)
-                return
+                deleteMessage(messageId: placeholderId)
+                await persistCacheSnapshot(conversationId: conversationId)
+                return false
             }
         } catch {
             CrashReporter.shared.reportNonFatal(error: error, action: "streaming_chat")
-            if didReceiveAnyChunk {
-                errorMessage = error.localizedDescription
-                return
-            }
+            deleteMessage(messageId: placeholderId)
+            await persistCacheSnapshot(conversationId: conversationId)
+            return false
         }
 
-        // Fallback to non-streaming endpoint (e.g. backend doesn't support SSE yet).
         do {
             let response = try await OpenClawAPI.shared.chat(conversationId: conversationId, message: prompt)
             let reply = Message(
@@ -158,20 +448,73 @@ final class ChatViewModel: ObservableObject {
                 createdAt: response.createdAt
             )
             replaceMessage(id: placeholderId, with: reply)
+            await persistCacheSnapshot(conversationId: conversationId)
+            return true
         } catch {
             errorMessage = error.localizedDescription
             deleteMessage(messageId: placeholderId)
+            await persistCacheSnapshot(conversationId: conversationId)
+            return false
         }
     }
 
     private func updateMessageContent(id: String, content: String) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         let current = messages[index]
-        messages[index] = Message(id: current.id, role: current.role, content: content, createdAt: current.createdAt)
+        messages[index] = Message(
+            id: current.id,
+            role: current.role,
+            content: content,
+            createdAt: current.createdAt,
+            deliveryState: current.deliveryState,
+            localQueueId: current.localQueueId,
+            retryCount: current.retryCount
+        )
     }
 
     private func replaceMessage(id: String, with newMessage: Message) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         messages[index] = newMessage
+    }
+
+    private func persistCacheSnapshotIfPossible() {
+        guard let cid = conversationId, !cid.isEmpty else { return }
+        let snapshot = messages
+        let title = conversationTitle
+        Task {
+            await persistCacheSnapshot(
+                conversationId: cid,
+                snapshot: snapshot,
+                title: title
+            )
+        }
+    }
+
+    private func persistCacheSnapshot(conversationId: String) async {
+        await persistCacheSnapshot(
+            conversationId: conversationId,
+            snapshot: messages,
+            title: conversationTitle
+        )
+    }
+
+    private func persistCacheSnapshot(conversationId: String, snapshot: [Message], title: String?) async {
+        let cacheable = normalizeMessagesForCache(snapshot)
+        await cacheStore.replaceMessages(conversationId: conversationId, messages: cacheable)
+        let lastMessage = cacheable.last?.content
+        await cacheStore.upsertConversation(
+            id: conversationId,
+            title: title,
+            updatedAt: Int(Date().timeIntervalSince1970),
+            lastMessage: lastMessage,
+            messageCount: cacheable.count
+        )
+    }
+
+    private func normalizeMessagesForCache(_ source: [Message]) -> [Message] {
+        source.filter { message in
+            let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty
+        }
     }
 }

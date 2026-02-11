@@ -9,6 +9,7 @@ import UIKit
 struct MessageRow: View {
     let message: Message
     let timestampText: String?
+    let onRetry: (() -> Void)?
     let onCopy: (() -> Void)?
     let onRegenerate: (() -> Void)?
     let onDelete: () -> Void
@@ -87,6 +88,22 @@ struct MessageRow: View {
                         .foregroundStyle(.secondary)
                         .padding(.top, 2)
                 }
+
+                if isUser, message.deliveryState != .sent {
+                    HStack(spacing: 8) {
+                        Text(message.deliveryState == .failed ? "发送失败" : "发送中...")
+                            .font(.caption2)
+                            .foregroundStyle(message.deliveryState == .failed ? Color.red.opacity(0.9) : .secondary)
+
+                        if message.deliveryState == .failed, let onRetry {
+                            Button("重试", action: onRetry)
+                                .font(.caption2.weight(.semibold))
+                                .buttonStyle(.plain)
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
             }
             .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
 
@@ -101,7 +118,7 @@ struct MessageRow: View {
     private var contentView: some View {
         if isUser {
             Text(message.content)
-                .foregroundStyle(Color.white)
+                .foregroundStyle(message.deliveryState == .sending ? Color(white: 0.78) : Color.white)
         } else {
             assistantContentView
         }

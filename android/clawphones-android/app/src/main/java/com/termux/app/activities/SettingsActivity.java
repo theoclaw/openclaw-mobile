@@ -7,10 +7,12 @@ import android.os.Environment;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
 
 import com.termux.R;
+import com.termux.app.settings.AppAppearancePreferences;
 import com.termux.shared.activities.ReportActivity;
 import com.termux.shared.file.FileUtils;
 import com.termux.shared.models.ReportInfo;
@@ -25,7 +27,6 @@ import com.termux.shared.android.AndroidUtils;
 import com.termux.shared.termux.TermuxConstants;
 import com.termux.shared.termux.TermuxUtils;
 import com.termux.shared.activity.media.AppCompatActivityUtils;
-import com.termux.shared.theme.NightMode;
 
 import ai.clawphones.agent.chat.PlanActivity;
 
@@ -35,7 +36,7 @@ public class SettingsActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        AppCompatActivityUtils.setNightMode(this, NightMode.getAppNightMode().getName(), true);
+        AppAppearancePreferences.applySavedMode(this);
 
         setContentView(R.layout.activity_settings);
         if (savedInstanceState == null) {
@@ -62,6 +63,7 @@ public class SettingsActivity extends AppCompatActivity {
             if (context == null) return;
 
             setPreferencesFromResource(R.xml.root_preferences, rootKey);
+            configureAppearancePreference(context);
 
             new Thread() {
                 @Override
@@ -75,6 +77,19 @@ public class SettingsActivity extends AppCompatActivity {
                     configureDonatePreference(context);
                 }
             }.start();
+        }
+
+        private void configureAppearancePreference(@NonNull Context context) {
+            ListPreference appearancePreference = findPreference(AppAppearancePreferences.PREFERENCE_KEY);
+            if (appearancePreference == null) return;
+
+            appearancePreference.setValue(AppAppearancePreferences.getSavedMode(context));
+            appearancePreference.setSummaryProvider(ListPreference.SimpleSummaryProvider.getInstance());
+            appearancePreference.setOnPreferenceChangeListener((preference, newValue) -> {
+                if (!(newValue instanceof String)) return false;
+                AppAppearancePreferences.applyMode((String) newValue);
+                return true;
+            });
         }
 
         private void configureTermuxAPIPreference(@NonNull Context context) {

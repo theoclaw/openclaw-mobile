@@ -15,11 +15,13 @@ struct ContentView: View {
     }
 
     @State private var selectedTab: Tab = .chat
+    @State private var pendingSharedPayloadID: String?
+    @State private var hasLoadedInitialSharedPayload = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                ConversationListView()
+                ConversationListView(pendingSharedPayloadID: $pendingSharedPayloadID)
             }
             .tabItem {
                 Label("聊天", systemImage: "message")
@@ -56,8 +58,20 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ClawPhonesAuthExpired"))) { _ in
             auth.refreshAuthState()
         }
+        .onOpenURL { url in
+            guard let payloadID = SharePayloadBridge.payloadID(from: url) else { return }
+            selectedTab = .chat
+            pendingSharedPayloadID = payloadID
+        }
         .onAppear {
             auth.refreshAuthState()
+
+            guard !hasLoadedInitialSharedPayload else { return }
+            hasLoadedInitialSharedPayload = true
+
+            if let payloadID = SharePayloadBridge.latestPayloadID() {
+                pendingSharedPayloadID = payloadID
+            }
         }
     }
 }

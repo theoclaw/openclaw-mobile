@@ -4,10 +4,15 @@ import android.Manifest;
 import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
+import android.content.BroadcastReceiver;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -48,6 +53,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.HashMap;
 
 import ai.clawphones.agent.CrashReporter;
 
@@ -68,7 +74,10 @@ public class ChatActivity extends AppCompatActivity {
     private ProgressBar mSendProgress;
 
     private final ArrayList<ChatMessage> mMessages = new ArrayList<>();
+    private final HashMap<Long, Integer> mQueuedMessageIndexes = new HashMap<>();
     private ChatAdapter mAdapter;
+    private MessageQueue mMessageQueue;
+    private ConversationCache mCache;
 
     private ExecutorService mExecutor;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -78,6 +87,7 @@ public class ChatActivity extends AppCompatActivity {
     @Nullable private Runnable mPendingUpdate = null;
     private static final long UPDATE_THROTTLE_MS = 50L;
     private static final long SPEECH_DONE_RESET_MS = 1_200L;
+    private static final int MAX_QUEUE_RETRY = 3;
     private static final int REQUEST_RECORD_AUDIO = 7021;
 
     private enum SpeechUiState {
@@ -95,6 +105,8 @@ public class ChatActivity extends AppCompatActivity {
     @Nullable private Runnable mPendingSpeechIdleReset = null;
     @NonNull private SpeechUiState mSpeechUiState = SpeechUiState.IDLE;
 
+    @Nullable private BroadcastReceiver mConnectivityReceiver;
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -104,6 +116,8 @@ public class ChatActivity extends AppCompatActivity {
             redirectToLogin(null);
             return;
         }
+
+        mCache = new ConversationCache(getApplicationContext());
 
         setContentView(R.layout.activity_chat);
 
@@ -131,13 +145,15 @@ public class ChatActivity extends AppCompatActivity {
         mSend = findViewById(R.id.message_send);
         mSendProgress = findViewById(R.id.message_send_progress);
 
-        mAdapter = new ChatAdapter(mMessages);
+        mAdapter = new ChatAdapter(mMessages, this::onRetryQueuedMessage);
         LinearLayoutManager lm = new LinearLayoutManager(this);
         lm.setStackFromEnd(true);
         mRecycler.setLayoutManager(lm);
         mRecycler.setAdapter(mAdapter);
 
+        mMessageQueue = new MessageQueue(this);
         mExecutor = Executors.newSingleThreadExecutor();
+        registerConnectivityReceiver();
 
         String existingConversationId = safeTrim(getIntent().getStringExtra("conversation_id"));
         if (!TextUtils.isEmpty(existingConversationId)) {
@@ -146,6 +162,7 @@ public class ChatActivity extends AppCompatActivity {
         } else {
             addAssistantMessage(getString(R.string.chat_welcome_message));
             createConversation();
+            restoreQueuedMessagesWithoutConversation();
         }
 
         mSend.setOnClickListener(v -> onSend());
@@ -160,6 +177,7 @@ public class ChatActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         mDestroyed = true;
+        unregisterConnectivityReceiver();
         clearPendingSpeechIdleReset();
         stopMicPulseAnimation();
         if (mSpeechHelper != null) {
@@ -173,6 +191,13 @@ public class ChatActivity extends AppCompatActivity {
             } catch (Exception ignored) {
             }
             mExecutor = null;
+        }
+        if (mCache != null) {
+            try {
+                mCache.close();
+            } catch (Exception ignored) {
+            }
+            mCache = null;
         }
         super.onDestroy();
     }
@@ -221,6 +246,28 @@ public class ChatActivity extends AppCompatActivity {
         setInputEnabled(false);
 
         execSafe(() -> {
+            boolean usedCache = false;
+            if (mCache != null) {
+                List<Map<String, Object>> cachedRows = new ArrayList<>(mCache.getRecentMessages(conversationId));
+                if (!cachedRows.isEmpty()) {
+                    Collections.sort(cachedRows, new Comparator<Map<String, Object>>() {
+                        @Override
+                        public int compare(Map<String, Object> a, Map<String, Object> b) {
+                            return Long.compare(asLong(a.get("created_at")), asLong(b.get("created_at")));
+                        }
+                    });
+                    usedCache = true;
+                    List<Map<String, Object>> safeCachedRows = cachedRows;
+                    runSafe(() -> {
+                        applyHistoryRows(safeCachedRows, conversationId);
+                        mBusy = false;
+                        setInputEnabled(true);
+                        tryFlushPendingMessages();
+                    });
+                }
+            }
+            final boolean hadCache = usedCache;
+
             try {
                 List<Map<String, Object>> rows = new ArrayList<>(
                     ClawPhonesAPI.getMessages(ChatActivity.this, conversationId));
@@ -232,21 +279,18 @@ public class ChatActivity extends AppCompatActivity {
                     }
                 });
 
+                if (mCache != null) {
+                    mCache.upsertMessages(conversationId, rows);
+                    rows = new ArrayList<>(mCache.getRecentMessages(conversationId));
+                }
+
+                List<Map<String, Object>> safeRows = rows;
+
                 runSafe(() -> {
-                    mMessages.clear();
-                    for (Map<String, Object> row : rows) {
-                        String role = asString(row.get("role"));
-                        String content = asString(row.get("content"));
-                        if (TextUtils.isEmpty(content)) continue;
-                        ChatMessage.Role messageRole = "user".equalsIgnoreCase(role)
-                            ? ChatMessage.Role.USER
-                            : ChatMessage.Role.ASSISTANT;
-                        mMessages.add(new ChatMessage(messageRole, content, false));
-                    }
-                    mAdapter.notifyDataSetChanged();
-                    scrollToBottom();
+                    applyHistoryRows(safeRows, conversationId);
                     mBusy = false;
                     setInputEnabled(true);
+                    tryFlushPendingMessages();
                 });
             } catch (ClawPhonesAPI.ApiException e) {
                 if (e.statusCode != 401) {
@@ -258,17 +302,60 @@ public class ChatActivity extends AppCompatActivity {
                         redirectToLogin(getString(R.string.chat_login_expired));
                         return;
                     }
-                    toast(getString(R.string.chat_error_load_history));
+                    if (!hadCache) {
+                        toast(getString(R.string.chat_error_load_history));
+                    }
                     mBusy = false;
                     setInputEnabled(true);
                 });
             } catch (IOException | JSONException e) {
                 CrashReporter.reportNonFatal(ChatActivity.this, e, "loading_history");
                 runSafe(() -> {
-                    toast(getString(R.string.chat_error_load_history));
+                    if (!hadCache) {
+                        toast(getString(R.string.chat_error_load_history));
+                    }
                     mBusy = false;
                     setInputEnabled(true);
                 });
+            }
+        });
+    }
+
+    private void applyHistoryRows(@NonNull List<Map<String, Object>> rows, @Nullable String conversationId) {
+        mMessages.clear();
+        mQueuedMessageIndexes.clear();
+        for (Map<String, Object> row : rows) {
+            String role = asString(row.get("role"));
+            String content = asString(row.get("content"));
+            if (TextUtils.isEmpty(content)) continue;
+            ChatMessage.Role messageRole = "user".equalsIgnoreCase(role)
+                ? ChatMessage.Role.USER
+                : ChatMessage.Role.ASSISTANT;
+            mMessages.add(new ChatMessage(messageRole, content, false));
+        }
+        restoreQueuedMessagesForConversation(conversationId);
+        mAdapter.notifyDataSetChanged();
+        scrollToBottom();
+    }
+
+    private void syncConversationHistoryToCache(@Nullable String conversationId) {
+        if (TextUtils.isEmpty(conversationId)) return;
+        execSafe(() -> {
+            try {
+                List<Map<String, Object>> rows = new ArrayList<>(
+                    ClawPhonesAPI.getMessages(ChatActivity.this, conversationId)
+                );
+                Collections.sort(rows, new Comparator<Map<String, Object>>() {
+                    @Override
+                    public int compare(Map<String, Object> a, Map<String, Object> b) {
+                        return Long.compare(asLong(a.get("created_at")), asLong(b.get("created_at")));
+                    }
+                });
+                if (mCache != null) {
+                    mCache.upsertMessages(conversationId, rows);
+                }
+            } catch (Exception e) {
+                CrashReporter.reportNonFatal(ChatActivity.this, e, "syncing_history_cache");
             }
         });
     }
@@ -285,9 +372,23 @@ public class ChatActivity extends AppCompatActivity {
                 String id = ClawPhonesAPI.createConversation(ChatActivity.this);
                 runSafe(() -> {
                     mConversationId = id;
+                    if (mCache != null) {
+                        long now = System.currentTimeMillis() / 1000L;
+                        mCache.upsertConversation(new ClawPhonesAPI.ConversationSummary(
+                            id,
+                            safeTrim(getIntent().getStringExtra("title")),
+                            now,
+                            now,
+                            0
+                        ));
+                    }
+                    if (mMessageQueue != null) {
+                        mMessageQueue.assignConversationIdForEmpty(id);
+                    }
                     updateAssistantMessage(idx, getString(R.string.chat_status_connected_ready));
                     mBusy = false;
                     setInputEnabled(true);
+                    tryFlushPendingMessages();
                 });
             } catch (IOException e) {
                 CrashReporter.reportNonFatal(ChatActivity.this, e, "creating_conversation");
@@ -328,72 +429,354 @@ public class ChatActivity extends AppCompatActivity {
         String text = safeTrim(mInput.getText().toString());
         if (TextUtils.isEmpty(text)) return;
 
-        if (TextUtils.isEmpty(mConversationId)) {
-            toast(getString(R.string.chat_status_initializing));
+        mLastUserText = text;
+        mInput.setText("");
+
+        if (canSendImmediately()) {
+            int userIndex = addUserMessage(text);
+            sendMessageOnline(mConversationId, text, null, userIndex);
             return;
         }
 
-        mLastUserText = text;
-        mInput.setText("");
-        addUserMessage(text);
+        queueMessageForLater(text, mConversationId);
+        if (isNetworkConnected()) {
+            if (TextUtils.isEmpty(mConversationId)) {
+                createConversation();
+            } else {
+                tryFlushPendingMessages();
+            }
+        }
+    }
+
+    private boolean canSendImmediately() {
+        return !TextUtils.isEmpty(mConversationId) && isNetworkConnected();
+    }
+
+    private void sendMessageOnline(@Nullable String conversationId, @NonNull String text,
+                                   @Nullable Long queueId, @Nullable Integer userIndex) {
+        if (TextUtils.isEmpty(conversationId)) {
+            if (queueId != null) {
+                if (mMessageQueue != null) mMessageQueue.markPending(queueId);
+                setQueuedMessageState(queueId, ChatMessage.DeliveryState.SENDING, 0);
+                if (isNetworkConnected() && TextUtils.isEmpty(mConversationId)) {
+                    createConversation();
+                }
+                return;
+            }
+
+            if (userIndex == null) {
+                queueMessageForLater(text, "");
+            } else {
+                queueExistingUserMessage(userIndex, text, "");
+            }
+            return;
+        }
 
         mBusy = true;
         setInputEnabled(false);
         setSendingState(true);
 
-        final int idx = addAssistantMessage(getString(R.string.chat_status_thinking), true);
+        if (queueId != null) {
+            int currentRetry = 0;
+            Integer idx = mQueuedMessageIndexes.get(queueId);
+            if (idx != null && idx >= 0 && idx < mMessages.size()) {
+                currentRetry = mMessages.get(idx).retryCount;
+            }
+            setQueuedMessageState(queueId, ChatMessage.DeliveryState.SENDING, currentRetry);
+        }
+
+        final int assistantIndex = addAssistantMessage(getString(R.string.chat_status_thinking), true);
+        final String targetConversationId = conversationId;
 
         execSafe(() -> {
             final StringBuilder accumulated = new StringBuilder();
-            ClawPhonesAPI.chatStream(ChatActivity.this, mConversationId, text, new ClawPhonesAPI.StreamCallback() {
-                @Override
-                public void onDelta(String delta) {
-                    accumulated.append(delta);
-                    final String current = accumulated.toString();
-                    runSafe(() -> updateAssistantMessageThrottled(idx, current));
-                }
+            ClawPhonesAPI.chatStream(
+                ChatActivity.this,
+                targetConversationId,
+                text,
+                new ClawPhonesAPI.StreamCallback() {
+                    @Override
+                    public void onDelta(String delta) {
+                        accumulated.append(delta);
+                        final String current = accumulated.toString();
+                        runSafe(() -> updateAssistantMessageThrottled(assistantIndex, current));
+                    }
 
-                @Override
-                public void onComplete(String fullContent, String messageId) {
-                    runSafe(() -> {
-                        clearPendingUpdate();
-                        String finalContent = fullContent;
-                        if (TextUtils.isEmpty(finalContent)) {
-                            finalContent = accumulated.toString();
-                        }
-                        updateAssistantMessage(idx, finalContent);
-                        mBusy = false;
-                        setInputEnabled(true);
-                        setSendingState(false);
-                    });
-                }
+                    @Override
+                    public void onComplete(String fullContent, String messageId) {
+                        runSafe(() -> {
+                            clearPendingUpdate();
+                            String finalContent = fullContent;
+                            if (TextUtils.isEmpty(finalContent)) {
+                                finalContent = accumulated.toString();
+                            }
+                            updateAssistantMessage(assistantIndex, finalContent);
+                            if (queueId != null) {
+                                if (mMessageQueue != null) mMessageQueue.remove(queueId);
+                                markQueuedMessageSent(queueId);
+                            }
+                            syncConversationHistoryToCache(targetConversationId);
+                            finishSendingCycle();
+                        });
+                    }
 
-                @Override
-                public void onError(Exception error) {
-                    CrashReporter.reportNonFatal(ChatActivity.this, error, "streaming_response");
-                    runSafe(() -> {
-                        clearPendingUpdate();
-                        if (error instanceof ClawPhonesAPI.ApiException
-                            && ((ClawPhonesAPI.ApiException) error).statusCode == 401) {
-                            ClawPhonesAPI.clearToken(ChatActivity.this);
-                            redirectToLogin(getString(R.string.chat_login_expired));
-                            return;
-                        }
+                    @Override
+                    public void onError(Exception error) {
+                        CrashReporter.reportNonFatal(ChatActivity.this, error, "streaming_response");
+                        runSafe(() -> {
+                            clearPendingUpdate();
+                            if (error instanceof ClawPhonesAPI.ApiException
+                                && ((ClawPhonesAPI.ApiException) error).statusCode == 401) {
+                                ClawPhonesAPI.clearToken(ChatActivity.this);
+                                redirectToLogin(getString(R.string.chat_login_expired));
+                                return;
+                            }
 
-                        String partial = accumulated.toString();
-                        if (!partial.isEmpty()) {
-                            updateAssistantMessage(idx,
-                                getString(R.string.chat_error_partial_interrupted, partial));
-                        } else {
-                            updateAssistantMessage(idx, getString(R.string.chat_error_send_failed));
-                        }
-                        mBusy = false;
-                        setInputEnabled(true);
-                        setSendingState(false);
-                    });
+                            if (queueId != null) {
+                                removeMessageAt(assistantIndex);
+                                handleQueuedSendFailure(queueId);
+                                finishSendingCycle();
+                                return;
+                            }
+
+                            if (isLikelyOffline(error)) {
+                                removeMessageAt(assistantIndex);
+                                if (userIndex != null) {
+                                    queueExistingUserMessage(userIndex, text, targetConversationId);
+                                } else {
+                                    queueMessageForLater(text, targetConversationId);
+                                }
+                                finishSendingCycle();
+                                return;
+                            }
+
+                            String partial = accumulated.toString();
+                            if (!partial.isEmpty()) {
+                                updateAssistantMessage(
+                                    assistantIndex,
+                                    getString(R.string.chat_error_partial_interrupted, partial)
+                                );
+                            } else {
+                                updateAssistantMessage(assistantIndex, getString(R.string.chat_error_send_failed));
+                            }
+                            finishSendingCycle();
+                        });
+                    }
                 }
-            });
+            );
         });
+    }
+
+    private void finishSendingCycle() {
+        mBusy = false;
+        setInputEnabled(true);
+        setSendingState(false);
+        tryFlushPendingMessages();
+    }
+
+    private void queueMessageForLater(@NonNull String text, @Nullable String conversationId) {
+        if (mMessageQueue == null) return;
+        long queueId = mMessageQueue.enqueue(text, conversationId);
+        int index = addUserMessage(text, queueId, ChatMessage.DeliveryState.SENDING, 0);
+        mQueuedMessageIndexes.put(queueId, index);
+    }
+
+    private void queueExistingUserMessage(int userIndex, @NonNull String text, @Nullable String conversationId) {
+        if (mMessageQueue == null) return;
+        long queueId = mMessageQueue.enqueue(text, conversationId);
+        if (userIndex >= 0 && userIndex < mMessages.size()) {
+            ChatMessage message = mMessages.get(userIndex);
+            message.queueId = queueId;
+            message.deliveryState = ChatMessage.DeliveryState.SENDING;
+            message.retryCount = 0;
+            mQueuedMessageIndexes.put(queueId, userIndex);
+            mAdapter.notifyItemChanged(userIndex);
+        }
+    }
+
+    private void handleQueuedSendFailure(long queueId) {
+        if (mMessageQueue == null) return;
+        int retryCount = mMessageQueue.incrementRetryCount(queueId);
+        if (retryCount >= MAX_QUEUE_RETRY) {
+            mMessageQueue.markFailed(queueId);
+            setQueuedMessageState(queueId, ChatMessage.DeliveryState.FAILED, retryCount);
+            return;
+        }
+        mMessageQueue.markPending(queueId);
+        setQueuedMessageState(queueId, ChatMessage.DeliveryState.SENDING, retryCount);
+        mMainHandler.postDelayed(this::tryFlushPendingMessages, 800L);
+    }
+
+    private void onRetryQueuedMessage(long queueId) {
+        if (mMessageQueue == null) return;
+        if (!isNetworkConnected()) {
+            toast(getString(R.string.chat_queue_waiting_network));
+            return;
+        }
+        mMessageQueue.resetForManualRetry(queueId);
+        setQueuedMessageState(queueId, ChatMessage.DeliveryState.SENDING, 0);
+        tryFlushPendingMessages();
+    }
+
+    private void tryFlushPendingMessages() {
+        if (mDestroyed || mBusy || mMessageQueue == null) return;
+        if (!isNetworkConnected()) return;
+
+        MessageQueue.PendingMessage next =
+            mMessageQueue.getNextPendingToSendForConversation(mConversationId);
+        if (next == null) return;
+
+        String targetConversationId = safeTrim(next.conversationId);
+        if (TextUtils.isEmpty(targetConversationId)) {
+            if (TextUtils.isEmpty(mConversationId)) {
+                createConversation();
+                return;
+            }
+            targetConversationId = mConversationId;
+            mMessageQueue.updateConversationId(next.id, targetConversationId);
+        }
+
+        mMessageQueue.markSending(next.id);
+        setQueuedMessageState(next.id, ChatMessage.DeliveryState.SENDING, next.retryCount);
+
+        if (!mQueuedMessageIndexes.containsKey(next.id)) {
+            int index = addUserMessage(next.message, next.id, ChatMessage.DeliveryState.SENDING, next.retryCount);
+            mQueuedMessageIndexes.put(next.id, index);
+        }
+        sendMessageOnline(targetConversationId, next.message, next.id, mQueuedMessageIndexes.get(next.id));
+    }
+
+    private void restoreQueuedMessagesForConversation(@Nullable String conversationId) {
+        if (mMessageQueue == null || TextUtils.isEmpty(conversationId)) return;
+        List<MessageQueue.PendingMessage> queued = mMessageQueue.listQueuedForConversation(conversationId);
+        for (MessageQueue.PendingMessage pending : queued) {
+            appendOrUpdateQueuedMessage(pending);
+        }
+    }
+
+    private void restoreQueuedMessagesWithoutConversation() {
+        if (mMessageQueue == null) return;
+        List<MessageQueue.PendingMessage> queued = mMessageQueue.listQueuedWithoutConversation();
+        for (MessageQueue.PendingMessage pending : queued) {
+            appendOrUpdateQueuedMessage(pending);
+        }
+    }
+
+    private void appendOrUpdateQueuedMessage(@NonNull MessageQueue.PendingMessage pending) {
+        ChatMessage.DeliveryState deliveryState = deliveryStateFromQueueStatus(pending.status);
+        if (mQueuedMessageIndexes.containsKey(pending.id)) {
+            setQueuedMessageState(pending.id, deliveryState, pending.retryCount);
+            return;
+        }
+        int index = addUserMessage(pending.message, pending.id, deliveryState, pending.retryCount);
+        mQueuedMessageIndexes.put(pending.id, index);
+    }
+
+    private ChatMessage.DeliveryState deliveryStateFromQueueStatus(@Nullable String status) {
+        if (MessageQueue.STATUS_FAILED.equals(status)) {
+            return ChatMessage.DeliveryState.FAILED;
+        }
+        return ChatMessage.DeliveryState.SENDING;
+    }
+
+    private void setQueuedMessageState(@Nullable Long queueId,
+                                       @NonNull ChatMessage.DeliveryState deliveryState,
+                                       int retryCount) {
+        if (queueId == null) return;
+        Integer index = mQueuedMessageIndexes.get(queueId);
+        if (index == null || index < 0 || index >= mMessages.size()) return;
+        ChatMessage message = mMessages.get(index);
+        message.queueId = queueId;
+        message.deliveryState = deliveryState;
+        message.retryCount = Math.max(0, retryCount);
+        mAdapter.notifyItemChanged(index);
+    }
+
+    private void markQueuedMessageSent(long queueId) {
+        Integer index = mQueuedMessageIndexes.remove(queueId);
+        if (index == null || index < 0 || index >= mMessages.size()) return;
+        ChatMessage message = mMessages.get(index);
+        message.queueId = -1L;
+        message.deliveryState = ChatMessage.DeliveryState.NONE;
+        message.retryCount = 0;
+        mAdapter.notifyItemChanged(index);
+    }
+
+    private void removeMessageAt(int index) {
+        if (index < 0 || index >= mMessages.size()) return;
+        ChatMessage removed = mMessages.remove(index);
+        if (removed.queueId > 0L) {
+            mQueuedMessageIndexes.remove(removed.queueId);
+        }
+
+        ArrayList<Long> keys = new ArrayList<>(mQueuedMessageIndexes.keySet());
+        for (Long key : keys) {
+            Integer current = mQueuedMessageIndexes.get(key);
+            if (current == null) continue;
+            if (current > index) {
+                mQueuedMessageIndexes.put(key, current - 1);
+            }
+        }
+        mAdapter.notifyItemRemoved(index);
+    }
+
+    private void registerConnectivityReceiver() {
+        if (mConnectivityReceiver != null) return;
+        mConnectivityReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(android.content.Context context, Intent intent) {
+                if (intent == null) return;
+                if (!"android.net.conn.CONNECTIVITY_CHANGE".equals(intent.getAction())) return;
+                if (isNetworkConnected()) {
+                    tryFlushPendingMessages();
+                }
+            }
+        };
+        try {
+            registerReceiver(mConnectivityReceiver, new IntentFilter("android.net.conn.CONNECTIVITY_CHANGE"));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void unregisterConnectivityReceiver() {
+        if (mConnectivityReceiver == null) return;
+        try {
+            unregisterReceiver(mConnectivityReceiver);
+        } catch (Exception ignored) {
+        }
+        mConnectivityReceiver = null;
+    }
+
+    private boolean isNetworkConnected() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            Network network = cm.getActiveNetwork();
+            if (network == null) return false;
+            NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+            if (caps == null) return false;
+            return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        } catch (Exception ignored) {
+            return true;
+        }
+    }
+
+    private boolean isLikelyOffline(@NonNull Throwable error) {
+        if (!isNetworkConnected()) return true;
+        Throwable root = rootCause(error);
+        return root instanceof java.net.UnknownHostException
+            || root instanceof java.net.ConnectException
+            || root instanceof java.net.NoRouteToHostException
+            || root instanceof java.net.SocketTimeoutException
+            || root instanceof java.io.InterruptedIOException;
+    }
+
+    private static Throwable rootCause(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private void confirmLogout() {
@@ -666,8 +1049,18 @@ public class ChatActivity extends AppCompatActivity {
     }
 
     private int addUserMessage(String text) {
+        return addUserMessage(text, -1L, ChatMessage.DeliveryState.NONE, 0);
+    }
+
+    private int addUserMessage(String text, long queueId,
+                               @NonNull ChatMessage.DeliveryState deliveryState,
+                               int retryCount) {
         int idx = mMessages.size();
-        mMessages.add(new ChatMessage(ChatMessage.Role.USER, text, false));
+        ChatMessage message = new ChatMessage(ChatMessage.Role.USER, text, false);
+        message.queueId = queueId;
+        message.deliveryState = deliveryState;
+        message.retryCount = Math.max(0, retryCount);
+        mMessages.add(message);
         mAdapter.notifyItemInserted(idx);
         scrollToBottom();
         return idx;
@@ -788,10 +1181,14 @@ public class ChatActivity extends AppCompatActivity {
 
     static final class ChatMessage {
         enum Role { USER, ASSISTANT }
+        enum DeliveryState { NONE, SENDING, FAILED }
 
         final Role role;
         String text;
         boolean isThinking;
+        long queueId = -1L;
+        DeliveryState deliveryState = DeliveryState.NONE;
+        int retryCount = 0;
 
         ChatMessage(Role role, String text, boolean isThinking) {
             this.role = role;
@@ -805,9 +1202,15 @@ public class ChatActivity extends AppCompatActivity {
         private static final int TYPE_USER = 1;
 
         private final ArrayList<ChatMessage> messages;
+        private final RetryClickListener retryClickListener;
 
-        ChatAdapter(ArrayList<ChatMessage> messages) {
+        interface RetryClickListener {
+            void onRetry(long queueId);
+        }
+
+        ChatAdapter(ArrayList<ChatMessage> messages, @Nullable RetryClickListener retryClickListener) {
             this.messages = messages;
+            this.retryClickListener = retryClickListener;
         }
 
         @Override
@@ -829,7 +1232,7 @@ public class ChatActivity extends AppCompatActivity {
             ChatMessage m = messages.get(position);
             boolean isUser = m.role == ChatMessage.Role.USER;
             boolean isThinking = !isUser && m.isThinking;
-            holder.bind(m.text, isUser, isThinking);
+            holder.bind(m, isUser, isThinking, retryClickListener);
         }
 
         @Override
@@ -840,27 +1243,63 @@ public class ChatActivity extends AppCompatActivity {
         static final class VH extends RecyclerView.ViewHolder {
             final TextView text;
             final View bubble;
+            final TextView statusText;
+            final TextView retryButton;
 
             VH(@NonNull View itemView) {
                 super(itemView);
                 text = itemView.findViewById(R.id.message_text);
                 bubble = itemView.findViewById(R.id.message_bubble);
+                statusText = itemView.findViewById(R.id.message_status);
+                retryButton = itemView.findViewById(R.id.message_retry);
                 if (text != null) {
                     text.setMovementMethod(LinkMovementMethod.getInstance());
                 }
             }
 
-            void bind(String markdown, boolean isUser, boolean isThinking) {
+            void bind(ChatMessage message, boolean isUser, boolean isThinking,
+                      @Nullable RetryClickListener retryClickListener) {
                 if (text != null) {
                     if (isThinking) {
-                        text.setText(markdown);
+                        text.setText(message.text);
                         text.setTypeface(null, Typeface.ITALIC);
                         text.setTextColor(0xFF888888);
                     } else {
-                        text.setText(renderMarkdown(markdown));
+                        text.setText(renderMarkdown(message.text));
                         text.setTypeface(null, Typeface.NORMAL);
-                        text.setTextColor(isUser ? Color.WHITE : 0xFFF5F0E6);
+                        if (isUser) {
+                            if (message.deliveryState == ChatMessage.DeliveryState.SENDING) {
+                                text.setTextColor(0xFFB8B8B8);
+                            } else {
+                                text.setTextColor(Color.WHITE);
+                            }
+                        } else {
+                            text.setTextColor(0xFFF5F0E6);
+                        }
                     }
+                }
+                if (statusText != null) {
+                    if (isUser && message.deliveryState == ChatMessage.DeliveryState.SENDING) {
+                        statusText.setVisibility(View.VISIBLE);
+                        statusText.setText(itemView.getContext().getString(R.string.chat_queue_sending));
+                        statusText.setTextColor(0xFF8E8E8E);
+                    } else if (isUser && message.deliveryState == ChatMessage.DeliveryState.FAILED) {
+                        statusText.setVisibility(View.VISIBLE);
+                        statusText.setText(itemView.getContext().getString(R.string.chat_queue_failed));
+                        statusText.setTextColor(0xFFE57373);
+                    } else {
+                        statusText.setVisibility(View.GONE);
+                    }
+                }
+                if (retryButton != null) {
+                    boolean showRetry = isUser
+                        && message.deliveryState == ChatMessage.DeliveryState.FAILED
+                        && message.queueId > 0L
+                        && retryClickListener != null;
+                    retryButton.setVisibility(showRetry ? View.VISIBLE : View.GONE);
+                    retryButton.setOnClickListener(showRetry
+                        ? v -> retryClickListener.onRetry(message.queueId)
+                        : null);
                 }
                 if (bubble != null) {
                     android.widget.FrameLayout.LayoutParams lp =

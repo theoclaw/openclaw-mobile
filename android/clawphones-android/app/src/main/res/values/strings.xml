@@ -137,6 +137,11 @@
 
     <!-- Termux Settings -->
     <string name="title_activity_termux_settings">&TERMUX_APP_NAME; Settings</string>
+    <string name="settings_appearance_category_title">外观</string>
+    <string name="settings_dark_mode_title">深色模式</string>
+    <string name="settings_dark_mode_option_system">跟随系统</string>
+    <string name="settings_dark_mode_option_light">浅色</string>
+    <string name="settings_dark_mode_option_dark">深色</string>
 
     <!-- Termux App Preferences -->
     <string name="termux_preferences_title">&TERMUX_APP_NAME;</string>
@@ -274,6 +279,10 @@
     <string name="chat_status_thinking">思考中...</string>
     <string name="chat_error_partial_interrupted">%1$s\n\n⚠️ 连接中断</string>
     <string name="chat_error_send_failed">⚠️ 发送失败</string>
+    <string name="chat_queue_sending">发送中...</string>
+    <string name="chat_queue_failed">发送失败</string>
+    <string name="chat_action_retry_send">重试</string>
+    <string name="chat_queue_waiting_network">当前离线，请联网后重试</string>
     <string name="chat_dialog_logout_confirm">确定退出登录吗？</string>
     <string name="chat_action_cancel">取消</string>
     <string name="chat_action_logout">退出</string>

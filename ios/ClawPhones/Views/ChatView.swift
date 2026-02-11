@@ -36,6 +36,9 @@ struct ChatView: View {
                             MessageRow(
                                 message: message,
                                 timestampText: timestampText(for: index),
+                                onRetry: message.role == .user && message.deliveryState == .failed ? {
+                                    viewModel.retryQueuedMessage(messageId: message.id)
+                                } : nil,
                                 onCopy: handleCopiedMessage,
                                 onRegenerate: message.role == .assistant ? {
                                     Task { await viewModel.regenerateAssistantMessage(messageId: message.id) }

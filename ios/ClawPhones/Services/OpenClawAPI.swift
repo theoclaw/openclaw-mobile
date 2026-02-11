@@ -177,9 +177,24 @@ final class OpenClawAPI {
         return try decode(AuthRefreshResponse.self, from: data)
     }
 
-    func loginWithApple(identityToken: String) async throws -> AuthLoginResponse {
-        // TODO: backend endpoint not finalized; keeping a stub so UI can ship.
-        throw ClawPhonesError.apiError("Sign in with Apple is coming soon.")
+    func loginWithApple(identityToken: String, userIdentifier: String, email: String?, fullName: String?) async throws -> AuthLoginResponse {
+        let url = URL(string: "\(baseURLString)/v1/auth/apple")!
+        var request = request(url: url, method: "POST")
+        request.addValue("application/json", forHTTPHeaderField: "Accept")
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body = AuthAppleRequestBody(
+            identityToken: identityToken,
+            userIdentifier: userIdentifier,
+            email: email,
+            fullName: fullName
+        )
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validate(response: response, data: data)
+
+        return try decode(AuthLoginResponse.self, from: data)
     }
 
     // MARK: User
@@ -446,6 +461,20 @@ final class OpenClawAPI {
     private struct AuthLoginRequestBody: Encodable {
         let email: String
         let password: String
+    }
+
+    private struct AuthAppleRequestBody: Encodable {
+        let identityToken: String
+        let userIdentifier: String
+        let email: String?
+        let fullName: String?
+
+        enum CodingKeys: String, CodingKey {
+            case identityToken = "identity_token"
+            case userIdentifier = "user_identifier"
+            case email
+            case fullName = "full_name"
+        }
     }
 
     private struct UpdateUserProfileRequestBody: Encodable {

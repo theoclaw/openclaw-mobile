@@ -17,9 +17,11 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 import aiosqlite
 import bcrypt
 import httpx
+import jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from jwt import InvalidTokenError
 
 
 load_dotenv()
@@ -113,6 +115,13 @@ APNS_AUTH_TOKEN = os.getenv("APNS_AUTH_TOKEN", "").strip()
 APNS_TOPIC = os.getenv("APNS_TOPIC", "").strip()
 APNS_USE_SANDBOX = os.getenv("APNS_USE_SANDBOX", "").strip().lower() in ("1", "true", "yes", "on")
 
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "").strip()
+APPLE_CLIENT_IDS = [v.strip() for v in os.getenv("APPLE_CLIENT_IDS", "").split(",") if v.strip()]
+if APPLE_CLIENT_ID and APPLE_CLIENT_ID not in APPLE_CLIENT_IDS:
+    APPLE_CLIENT_IDS.append(APPLE_CLIENT_ID)
+APPLE_JWKS_URL = os.getenv("APPLE_JWKS_URL", "https://appleid.apple.com/auth/keys").strip() or "https://appleid.apple.com/auth/keys"
+APPLE_JWKS_CACHE_TTL_SECONDS = max(60, int(os.getenv("APPLE_JWKS_CACHE_TTL_SECONDS", "3600")))
+
 
 TIER_LEVEL = {"free": 0, "pro": 1, "max": 2}
 LEVEL_TIER = {0: "free", 1: "pro", 2: "max"}
@@ -135,6 +144,7 @@ TOKEN_TTL_SECONDS = 30 * 86400
 TOKEN_REFRESH_WINDOW_SECONDS = 7 * 86400
 
 _CALL_LLM_BODY: ContextVar[Optional[Dict[str, Any]]] = ContextVar("_CALL_LLM_BODY", default=None)
+_APPLE_JWKS_CACHE: Dict[str, Any] = {"fetched_at": 0, "keys": []}
 
 PERSONA_PROMPTS: Dict[str, str] = {
     "assistant": (
@@ -230,6 +240,30 @@ def _ensure_dir(path: str) -> None:
 
 def _normalize_email(email: str) -> str:
     return (email or "").strip().lower()
+
+
+def _normalize_apple_name(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.strip().split())
+
+
+def _normalize_apple_sub(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _is_valid_apple_name(name: str) -> bool:
+    return bool(name) and len(name) <= 100
+
+
+def _apple_placeholder_email(sub: str, attempt: int) -> str:
+    safe_sub = re.sub(r"[^a-z0-9]", "", (sub or "").lower())[:32]
+    if not safe_sub:
+        safe_sub = secrets.token_hex(8)
+    suffix = f"_{attempt}" if attempt > 0 else ""
+    return f"apple_{safe_sub}{suffix}@appleid.local"
 
 
 def _gen_device_token() -> str:
@@ -364,6 +398,11 @@ async def _init_db() -> None:
             await db.execute("ALTER TABLE users ADD COLUMN last_refresh_at INTEGER")
         except Exception:
             pass
+        # Migration for existing DBs: add apple_id to users.
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN apple_id TEXT")
+        except Exception:
+            pass
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS usage_daily (
@@ -423,6 +462,7 @@ async def _init_db() -> None:
         await db.execute("CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id ON push_tokens(user_id)")
         await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_push_tokens_platform_token ON push_tokens(platform, push_token)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+        await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_apple_id ON users(apple_id)")
         await db.commit()
 
 
@@ -518,6 +558,32 @@ async def _get_user_row_by_email(email: str) -> Optional[Dict[str, Any]]:
             WHERE email=?
             """,
             (email,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def _get_user_row_by_apple_id(apple_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT
+              id,
+              email,
+              password_hash,
+              apple_id,
+              name,
+              avatar_url,
+              tier,
+              ai_config,
+              language,
+              created_at,
+              updated_at
+            FROM users
+            WHERE apple_id=?
+            """,
+            (apple_id,),
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
@@ -648,6 +714,127 @@ def _require_upstream_key(provider: str) -> None:
         raise HTTPException(status_code=500, detail="missing KIMI_API_KEY")
     if provider == "claude" and not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="missing ANTHROPIC_API_KEY")
+
+
+def _apple_token_audiences(aud: Any) -> List[str]:
+    if isinstance(aud, str):
+        v = aud.strip()
+        return [v] if v else []
+    if isinstance(aud, list):
+        out: List[str] = []
+        for item in aud:
+            if isinstance(item, str):
+                v = item.strip()
+                if v:
+                    out.append(v)
+        return out
+    return []
+
+
+def _is_expected_apple_audience(aud: Any) -> bool:
+    if not APPLE_CLIENT_IDS:
+        return False
+    audiences = _apple_token_audiences(aud)
+    if not audiences:
+        return False
+    allowed = set(APPLE_CLIENT_IDS)
+    return any(a in allowed for a in audiences)
+
+
+async def _fetch_apple_jwks(*, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    now = int(time.time())
+    cached_at = int(_APPLE_JWKS_CACHE.get("fetched_at") or 0)
+    cached_keys = _APPLE_JWKS_CACHE.get("keys") or []
+    if not force_refresh and isinstance(cached_keys, list) and cached_keys and (now - cached_at) < APPLE_JWKS_CACHE_TTL_SECONDS:
+        return [k for k in cached_keys if isinstance(k, dict)]
+
+    timeout = httpx.Timeout(10.0, connect=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(APPLE_JWKS_URL, headers={"Accept": "application/json"})
+    except Exception:
+        raise HTTPException(status_code=502, detail="failed to fetch Apple public keys")
+
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail="failed to fetch Apple public keys")
+
+    try:
+        payload = resp.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="invalid Apple keys response")
+
+    keys = payload.get("keys") if isinstance(payload, dict) else None
+    if not isinstance(keys, list):
+        raise HTTPException(status_code=502, detail="invalid Apple keys response")
+    normalized = [k for k in keys if isinstance(k, dict)]
+    _APPLE_JWKS_CACHE["fetched_at"] = now
+    _APPLE_JWKS_CACHE["keys"] = normalized
+    return normalized
+
+
+def _find_apple_jwk(keys: List[Dict[str, Any]], kid: str) -> Optional[Dict[str, Any]]:
+    for key in keys:
+        if not isinstance(key, dict):
+            continue
+        if key.get("kid") == kid and key.get("kty") == "RSA":
+            return key
+    return None
+
+
+async def _verify_apple_identity_token(identity_token: str) -> Dict[str, Any]:
+    if not APPLE_CLIENT_IDS:
+        raise HTTPException(status_code=500, detail="Apple auth is not configured on server")
+
+    token = (identity_token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="identity_token required")
+
+    try:
+        header = jwt.get_unverified_header(token)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid Apple identity token")
+
+    kid = header.get("kid")
+    alg = header.get("alg")
+    if not isinstance(kid, str) or not kid.strip():
+        raise HTTPException(status_code=400, detail="invalid Apple identity token header")
+    if alg != "RS256":
+        raise HTTPException(status_code=400, detail="unsupported Apple identity token algorithm")
+
+    keys = await _fetch_apple_jwks(force_refresh=False)
+    jwk = _find_apple_jwk(keys, kid.strip())
+    if not jwk:
+        keys = await _fetch_apple_jwks(force_refresh=True)
+        jwk = _find_apple_jwk(keys, kid.strip())
+    if not jwk:
+        raise HTTPException(status_code=401, detail="Apple public key not found for token")
+
+    try:
+        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(jwk))
+    except Exception:
+        raise HTTPException(status_code=500, detail="invalid Apple public key")
+
+    try:
+        payload = jwt.decode(
+            token,
+            key=public_key,
+            algorithms=["RS256"],
+            issuer="https://appleid.apple.com",
+            options={
+                "verify_aud": False,
+                "require": ["iss", "aud", "sub", "exp", "iat"],
+            },
+        )
+    except InvalidTokenError:
+        raise HTTPException(status_code=401, detail="invalid Apple identity token")
+
+    if not _is_expected_apple_audience(payload.get("aud")):
+        raise HTTPException(status_code=401, detail="Apple token audience mismatch")
+    sub = _normalize_apple_sub(payload.get("sub"))
+    if not sub:
+        raise HTTPException(status_code=401, detail="Apple token missing subject")
+
+    return payload
 
 
 async def _call_openai_compatible(
@@ -995,6 +1182,188 @@ async def auth_login(request: Request) -> Any:
         "tier": tier,
         "name": user.get("name") or "",
         "ai_config": ai_config,
+        "expires_at": expires_at,
+    }
+
+
+@app.post("/v1/auth/apple")
+async def auth_apple(request: Request) -> Any:
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid json body")
+
+    identity_token = body.get("identity_token")
+    user_identifier_raw = body.get("user_identifier")
+    email_raw = body.get("email")
+    full_name_raw = body.get("full_name")
+
+    if not isinstance(identity_token, str) or not identity_token.strip():
+        raise HTTPException(status_code=400, detail="identity_token required")
+    if user_identifier_raw is not None and not isinstance(user_identifier_raw, str):
+        raise HTTPException(status_code=400, detail="user_identifier must be a string")
+    if email_raw is not None and not isinstance(email_raw, str):
+        raise HTTPException(status_code=400, detail="email must be a string")
+    if full_name_raw is not None and not isinstance(full_name_raw, str):
+        raise HTTPException(status_code=400, detail="full_name must be a string")
+
+    payload = await _verify_apple_identity_token(identity_token)
+    apple_id = _normalize_apple_sub(payload.get("sub"))
+    if not apple_id:
+        raise HTTPException(status_code=401, detail="Apple token missing subject")
+
+    user_identifier = _normalize_apple_sub(user_identifier_raw)
+    if user_identifier and user_identifier != apple_id:
+        raise HTTPException(status_code=400, detail="user_identifier does not match Apple token subject")
+
+    email_norm = ""
+    for candidate in (email_raw, payload.get("email")):
+        if isinstance(candidate, str) and candidate.strip():
+            candidate_norm = _normalize_email(candidate)
+            if _is_valid_email(candidate_norm):
+                email_norm = candidate_norm
+                break
+
+    full_name = _normalize_apple_name(full_name_raw)
+    if not full_name:
+        given_name = _normalize_apple_name(body.get("given_name"))
+        family_name = _normalize_apple_name(body.get("family_name"))
+        full_name = _normalize_apple_name(f"{given_name} {family_name}".strip())
+    if full_name and not _is_valid_apple_name(full_name):
+        raise HTTPException(status_code=400, detail="full_name too long")
+
+    now = int(time.time())
+    expires_at = now + TOKEN_TTL_SECONDS
+    user: Optional[Dict[str, Any]] = None
+    created = False
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        async with db.execute(
+            """
+            SELECT id,email,password_hash,apple_id,name,avatar_url,tier,ai_config,language,created_at,updated_at
+            FROM users
+            WHERE apple_id=?
+            """,
+            (apple_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            user = dict(row) if row else None
+
+        if user and full_name and not _normalize_apple_name(user.get("name")):
+            await db.execute(
+                "UPDATE users SET name=?, updated_at=? WHERE id=?",
+                (full_name, now, str(user["id"])),
+            )
+            user["name"] = full_name
+            user["updated_at"] = now
+
+        if not user and email_norm:
+            async with db.execute(
+                """
+                SELECT id,email,password_hash,apple_id,name,avatar_url,tier,ai_config,language,created_at,updated_at
+                FROM users
+                WHERE email=?
+                """,
+                (email_norm,),
+            ) as cur:
+                row = await cur.fetchone()
+                if row:
+                    user = dict(row)
+                    linked_apple_id = _normalize_apple_sub(user.get("apple_id"))
+                    if linked_apple_id and linked_apple_id != apple_id:
+                        raise HTTPException(status_code=409, detail="email already linked to another Apple account")
+
+                    updates: List[str] = []
+                    params: List[Any] = []
+                    if not linked_apple_id:
+                        updates.append("apple_id=?")
+                        params.append(apple_id)
+                        user["apple_id"] = apple_id
+                    if full_name and not _normalize_apple_name(user.get("name")):
+                        updates.append("name=?")
+                        params.append(full_name)
+                        user["name"] = full_name
+                    if updates:
+                        updates.append("updated_at=?")
+                        params.append(now)
+                        params.append(str(user["id"]))
+                        await db.execute(f"UPDATE users SET {', '.join(updates)} WHERE id=?", tuple(params))
+                        user["updated_at"] = now
+
+        if not user:
+            if not email_norm:
+                for attempt in range(20):
+                    candidate_email = _apple_placeholder_email(apple_id, attempt)
+                    async with db.execute("SELECT 1 FROM users WHERE email=?", (candidate_email,)) as cur:
+                        exists = await cur.fetchone()
+                    if not exists:
+                        email_norm = candidate_email
+                        break
+            if not email_norm:
+                raise HTTPException(status_code=500, detail="failed to generate email for Apple account")
+            if not _is_valid_email(email_norm):
+                raise HTTPException(status_code=400, detail="invalid email for Apple account")
+
+            user_id = str(uuid.uuid4())
+            tier = "free"
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO users(id,email,password_hash,apple_id,name,tier,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?)
+                    """,
+                    (user_id, email_norm, None, apple_id, full_name, tier, now, now),
+                )
+                user = {
+                    "id": user_id,
+                    "email": email_norm,
+                    "password_hash": None,
+                    "apple_id": apple_id,
+                    "name": full_name,
+                    "avatar_url": None,
+                    "tier": tier,
+                    "ai_config": "{}",
+                    "language": "auto",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                created = True
+            except sqlite3.IntegrityError:
+                # Race condition fallback: lookup newly linked/created account.
+                user = await _get_user_row_by_apple_id(apple_id)
+                if not user and email_norm:
+                    user = await _get_user_row_by_email(email_norm)
+                if not user:
+                    raise HTTPException(status_code=409, detail="Apple account already registered")
+
+        if not user:
+            raise HTTPException(status_code=500, detail="failed to resolve Apple user")
+
+        tier = str(user.get("tier") or "free")
+        if tier not in LIMITS:
+            tier = "free"
+
+        token = await _mint_device_token_for_user(
+            db,
+            user_id=str(user["id"]),
+            tier=tier,
+            now=now,
+            expires_at=expires_at,
+        )
+        await db.commit()
+
+    ai_config = _safe_json_loads_object(user.get("ai_config"))
+    return {
+        "user_id": str(user["id"]),
+        "token": token,
+        "tier": tier,
+        "name": user.get("name") or "",
+        "ai_config": ai_config,
+        "created": created,
         "expires_at": expires_at,
     }
 

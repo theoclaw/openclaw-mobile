@@ -289,11 +289,37 @@ public class ClawPhonesAPI {
         return out;
     }
 
+    /** GET /v1/conversations?limit=&offset= -> list */
+    public static List<ConversationSummary> listConversations(Context context, int limit, int offset)
+        throws IOException, ApiException, JSONException {
+        List<Map<String, Object>> maps = getConversations(context, limit, offset);
+        List<ConversationSummary> out = new ArrayList<>();
+        for (Map<String, Object> map : maps) {
+            out.add(new ConversationSummary(
+                asString(map.get("id")),
+                asStringOrNull(map.get("title")),
+                asLong(map.get("created_at")),
+                asLong(map.get("updated_at")),
+                (int) asLong(map.get("message_count"))
+            ));
+        }
+        return out;
+    }
+
     /** GET /v1/conversations -> [{id,title,created_at,updated_at,message_count}, ...] */
     public static List<Map<String, Object>> getConversations(Context context)
         throws IOException, ApiException, JSONException {
+        return getConversations(context, 20, 0);
+    }
+
+    /** GET /v1/conversations?limit=&offset= -> [{id,title,created_at,updated_at,message_count}, ...] */
+    public static List<Map<String, Object>> getConversations(Context context, int limit, int offset)
+        throws IOException, ApiException, JSONException {
         String token = resolveAuthTokenForRequest(context);
-        Object resp = doGetAny(BASE_URL + "/v1/conversations", token);
+        int safeLimit = Math.max(1, limit);
+        int safeOffset = Math.max(0, offset);
+        String url = BASE_URL + "/v1/conversations?limit=" + safeLimit + "&offset=" + safeOffset;
+        Object resp = doGetAny(url, token);
         JSONArray arr = extractArray(resp, "conversations");
         List<Map<String, Object>> out = new ArrayList<>();
         if (arr == null) return out;

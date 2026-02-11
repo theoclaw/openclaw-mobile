@@ -44,6 +44,7 @@ public class ConversationListActivity extends AppCompatActivity {
     private RecyclerView mRecycler;
     private TextView mEmptyState;
     private ConversationAdapter mAdapter;
+    private ConversationCache mCache;
 
     private ExecutorService mExecutor;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -60,6 +61,8 @@ public class ConversationListActivity extends AppCompatActivity {
             redirectToLogin();
             return;
         }
+
+        mCache = new ConversationCache(getApplicationContext());
 
         setContentView(R.layout.activity_conversation_list);
 
@@ -100,6 +103,7 @@ public class ConversationListActivity extends AppCompatActivity {
             });
         }
 
+        loadCachedConversations();
         loadConversations();
     }
 
@@ -111,6 +115,7 @@ public class ConversationListActivity extends AppCompatActivity {
             redirectToLogin();
             return;
         }
+        loadCachedConversations();
         loadConversations();
     }
 
@@ -124,6 +129,13 @@ public class ConversationListActivity extends AppCompatActivity {
             } catch (Exception ignored) {
             }
             mExecutor = null;
+        }
+        if (mCache != null) {
+            try {
+                mCache.close();
+            } catch (Exception ignored) {
+            }
+            mCache = null;
         }
         super.onDestroy();
     }
@@ -187,6 +199,9 @@ public class ConversationListActivity extends AppCompatActivity {
         execSafe(() -> {
             try {
                 ClawPhonesAPI.deleteConversation(ConversationListActivity.this, conversationId);
+                if (mCache != null) {
+                    mCache.removeConversation(conversationId);
+                }
                 runSafe(() -> {
                     int idx = mAdapter.removeById(conversationId);
                     if (idx >= 0) {
@@ -225,7 +240,11 @@ public class ConversationListActivity extends AppCompatActivity {
         execSafe(() -> {
             try {
                 List<ClawPhonesAPI.ConversationSummary> conversations =
-                    new ArrayList<>(ClawPhonesAPI.listConversations(ConversationListActivity.this));
+                    new ArrayList<>(ClawPhonesAPI.listConversations(
+                        ConversationListActivity.this,
+                        ConversationCache.MAX_CONVERSATIONS,
+                        0
+                    ));
                 Collections.sort(conversations, new Comparator<ClawPhonesAPI.ConversationSummary>() {
                     @Override
                     public int compare(ClawPhonesAPI.ConversationSummary a, ClawPhonesAPI.ConversationSummary b) {
@@ -234,6 +253,10 @@ public class ConversationListActivity extends AppCompatActivity {
                         return Long.compare(bt, at);
                     }
                 });
+
+                if (mCache != null) {
+                    mCache.upsertConversations(conversations);
+                }
 
                 runSafe(() -> {
                     mAdapter.replaceAll(conversations);
@@ -249,12 +272,30 @@ public class ConversationListActivity extends AppCompatActivity {
                         redirectToLogin();
                         return;
                     }
-                    toast(getString(R.string.conversation_error_load_failed));
+                    if (mAdapter.getItemCount() == 0) {
+                        toast(getString(R.string.conversation_error_load_failed));
+                    }
                 });
             } catch (IOException | JSONException e) {
                 CrashReporter.reportNonFatal(ConversationListActivity.this, e, "loading_conversations");
-                runSafe(() -> toast(getString(R.string.conversation_error_load_failed)));
+                runSafe(() -> {
+                    if (mAdapter.getItemCount() == 0) {
+                        toast(getString(R.string.conversation_error_load_failed));
+                    }
+                });
             }
+        });
+    }
+
+    private void loadCachedConversations() {
+        execSafe(() -> {
+            if (mCache == null) return;
+            List<ClawPhonesAPI.ConversationSummary> cached = mCache.getRecentConversations();
+            if (cached.isEmpty()) return;
+            runSafe(() -> {
+                mAdapter.replaceAll(cached);
+                updateEmptyState();
+            });
         });
     }
 

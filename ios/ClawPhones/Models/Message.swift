@@ -12,6 +12,9 @@ struct Message: Identifiable, Codable, Hashable {
     let role: Role
     let content: String
     let createdAt: Int
+    var deliveryState: DeliveryState = .sent
+    var localQueueId: String? = nil
+    var retryCount: Int = 0
 
     enum Role: String, Codable {
         case user
@@ -19,11 +22,35 @@ struct Message: Identifiable, Codable, Hashable {
         case system
     }
 
+    enum DeliveryState: String, Codable {
+        case sent
+        case sending
+        case failed
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case role
         case content
         case createdAt = "created_at"
+    }
+
+    init(
+        id: String,
+        role: Role,
+        content: String,
+        createdAt: Int,
+        deliveryState: DeliveryState = .sent,
+        localQueueId: String? = nil,
+        retryCount: Int = 0
+    ) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.createdAt = createdAt
+        self.deliveryState = deliveryState
+        self.localQueueId = localQueueId
+        self.retryCount = retryCount
     }
 }
 
