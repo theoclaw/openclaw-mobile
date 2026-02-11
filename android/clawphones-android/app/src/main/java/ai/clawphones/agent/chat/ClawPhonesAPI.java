@@ -193,25 +193,42 @@ public class ClawPhonesAPI {
 
     private static JSONObject readResponse(HttpURLConnection conn) throws IOException, ApiException, JSONException {
         int code = conn.getResponseCode();
-        BufferedReader reader;
-        if (code >= 200 && code < 300) {
-            reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-        } else {
-            reader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8));
-        }
-
         StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            sb.append(line);
+
+        try {
+            java.io.InputStream stream;
+            if (code >= 200 && code < 300) {
+                stream = conn.getInputStream();
+            } else {
+                stream = conn.getErrorStream();
+                if (stream == null) {
+                    // Some Android versions return null error stream
+                    stream = conn.getInputStream();
+                }
+            }
+            if (stream != null) {
+                BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(stream, StandardCharsets.UTF_8));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line);
+                }
+                reader.close();
+            }
+        } catch (IOException e) {
+            if (code >= 200 && code < 300) throw e;
+            // For error responses, stream read failure is non-fatal
+        } finally {
+            conn.disconnect();
         }
-        reader.close();
-        conn.disconnect();
 
         String raw = sb.toString();
         if (code < 200 || code >= 300) {
             Logger.logError(LOG_TAG, "API error " + code + ": " + raw);
-            throw new ApiException(code, raw);
+            throw new ApiException(code, raw.isEmpty() ? "HTTP " + code : raw);
+        }
+        if (raw.isEmpty()) {
+            throw new JSONException("Empty response body");
         }
         return new JSONObject(raw);
     }

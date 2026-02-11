@@ -3,6 +3,8 @@ package ai.clawphones.agent.chat;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Html;
 import android.text.TextUtils;
 import android.text.method.LinkMovementMethod;
@@ -15,6 +17,7 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.widget.Toolbar;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -28,7 +31,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Basic in-app AI chat UI backed by ClawPhones API.
+ * In-app AI chat UI backed by ClawPhones API.
+ *
+ * Handles: conversation creation, message send/receive, 401 auto-logout,
+ * Markdown rendering, and graceful lifecycle management.
  */
 public class ChatActivity extends Activity {
 
@@ -40,6 +46,8 @@ public class ChatActivity extends Activity {
     private ChatAdapter mAdapter;
 
     private ExecutorService mExecutor;
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    private volatile boolean mDestroyed = false;
     private boolean mBusy = false;
 
     private String mToken;
@@ -58,24 +66,43 @@ public class ChatActivity extends Activity {
 
         setContentView(R.layout.activity_chat);
 
+        // Setup toolbar with title and back navigation
+        Toolbar toolbar = findViewById(R.id.chat_toolbar);
+        if (toolbar != null) {
+            toolbar.setTitle("ClawPhones AI");
+            toolbar.setSubtitle("智能助手");
+            toolbar.setNavigationIcon(android.R.drawable.ic_menu_revert);
+            toolbar.setNavigationOnClickListener(v -> finish());
+        }
+
         mRecycler = findViewById(R.id.messages_recycler);
         mInput = findViewById(R.id.message_input);
         mSend = findViewById(R.id.message_send);
 
         mAdapter = new ChatAdapter(mMessages);
-        mRecycler.setLayoutManager(new LinearLayoutManager(this));
+        LinearLayoutManager lm = new LinearLayoutManager(this);
+        lm.setStackFromEnd(true);
+        mRecycler.setLayoutManager(lm);
         mRecycler.setAdapter(mAdapter);
 
         mExecutor = Executors.newSingleThreadExecutor();
 
-        addAssistantMessage("Hi! 你可以直接开始聊天。");
+        addAssistantMessage("你好！有什么我可以帮你的吗？");
         createConversation();
 
         mSend.setOnClickListener(v -> onSend());
+
+        // Also send on keyboard Enter
+        mInput.setOnEditorActionListener((v, actionId, event) -> {
+            onSend();
+            return true;
+        });
     }
 
     @Override
     protected void onDestroy() {
+        mDestroyed = true;
+        mMainHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
         if (mExecutor != null) {
             try {
@@ -85,36 +112,50 @@ public class ChatActivity extends Activity {
         }
     }
 
+    /** Post to UI thread safely — skips if activity is destroyed. */
+    private void runSafe(Runnable r) {
+        if (mDestroyed) return;
+        mMainHandler.post(() -> {
+            if (!mDestroyed) r.run();
+        });
+    }
+
     private void createConversation() {
         if (mBusy) return;
         mBusy = true;
         setInputEnabled(false);
 
-        final int idx = addAssistantMessage("正在创建对话…");
+        final int idx = addAssistantMessage("正在连接…");
 
         mExecutor.execute(() -> {
             try {
                 String id = ClawPhonesAPI.createConversation(mToken);
-                runOnUiThread(() -> {
+                runSafe(() -> {
                     mConversationId = id;
-                    updateAssistantMessage(idx, "对话已创建，可以开始提问。");
+                    updateAssistantMessage(idx, "已连接，可以开始提问。");
                     mBusy = false;
                     setInputEnabled(true);
                 });
-            } catch (IOException | JSONException e) {
-                runOnUiThread(() -> {
-                    updateAssistantMessage(idx, "创建对话失败: " + e.getMessage());
+            } catch (IOException e) {
+                runSafe(() -> {
+                    updateAssistantMessage(idx, "网络错误: " + safeMsg(e));
+                    mBusy = false;
+                    setInputEnabled(true);
+                });
+            } catch (JSONException e) {
+                runSafe(() -> {
+                    updateAssistantMessage(idx, "数据解析错误");
                     mBusy = false;
                     setInputEnabled(true);
                 });
             } catch (ClawPhonesAPI.ApiException e) {
-                runOnUiThread(() -> {
+                runSafe(() -> {
                     if (e.statusCode == 401) {
                         ClawPhonesAPI.clearToken(ChatActivity.this);
                         redirectToLogin("登录已过期，请重新登录");
                         return;
                     }
-                    updateAssistantMessage(idx, "创建对话失败: " + safeErr(e));
+                    updateAssistantMessage(idx, "连接失败: " + safeErr(e));
                     mBusy = false;
                     setInputEnabled(true);
                 });
@@ -139,24 +180,30 @@ public class ChatActivity extends Activity {
         mBusy = true;
         setInputEnabled(false);
 
-        final int idx = addAssistantMessage("…");
+        final int idx = addAssistantMessage("思考中…");
 
         mExecutor.execute(() -> {
             try {
                 String reply = ClawPhonesAPI.chat(mToken, mConversationId, text);
-                runOnUiThread(() -> {
+                runSafe(() -> {
                     updateAssistantMessage(idx, reply);
                     mBusy = false;
                     setInputEnabled(true);
                 });
-            } catch (IOException | JSONException e) {
-                runOnUiThread(() -> {
-                    updateAssistantMessage(idx, "请求失败: " + e.getMessage());
+            } catch (IOException e) {
+                runSafe(() -> {
+                    updateAssistantMessage(idx, "网络错误: " + safeMsg(e));
+                    mBusy = false;
+                    setInputEnabled(true);
+                });
+            } catch (JSONException e) {
+                runSafe(() -> {
+                    updateAssistantMessage(idx, "数据解析错误");
                     mBusy = false;
                     setInputEnabled(true);
                 });
             } catch (ClawPhonesAPI.ApiException e) {
-                runOnUiThread(() -> {
+                runSafe(() -> {
                     if (e.statusCode == 401) {
                         ClawPhonesAPI.clearToken(ChatActivity.this);
                         redirectToLogin("登录已过期，请重新登录");
@@ -177,11 +224,14 @@ public class ChatActivity extends Activity {
     }
 
     private void setInputEnabled(boolean enabled) {
-        mInput.setEnabled(enabled);
-        mSend.setEnabled(enabled);
-        float alpha = enabled ? 1.0f : 0.6f;
-        mInput.setAlpha(alpha);
-        mSend.setAlpha(alpha);
+        if (mInput != null) {
+            mInput.setEnabled(enabled);
+            mInput.setAlpha(enabled ? 1.0f : 0.6f);
+        }
+        if (mSend != null) {
+            mSend.setEnabled(enabled);
+            mSend.setAlpha(enabled ? 1.0f : 0.6f);
+        }
     }
 
     private int addUserMessage(String text) {
@@ -211,7 +261,7 @@ public class ChatActivity extends Activity {
     private void scrollToBottom() {
         mRecycler.post(() -> {
             if (mAdapter.getItemCount() > 0) {
-                mRecycler.scrollToPosition(mAdapter.getItemCount() - 1);
+                mRecycler.smoothScrollToPosition(mAdapter.getItemCount() - 1);
             }
         });
     }
@@ -225,12 +275,27 @@ public class ChatActivity extends Activity {
         return s.trim();
     }
 
-    private static String safeErr(ClawPhonesAPI.ApiException e) {
+    private static String safeMsg(Exception e) {
         String msg = e.getMessage();
-        if (msg == null || msg.trim().isEmpty()) msg = "HTTP " + e.statusCode;
-        if (msg.length() > 400) msg = msg.substring(0, 400) + "…";
+        if (msg == null || msg.trim().isEmpty()) return "未知错误";
+        if (msg.length() > 200) msg = msg.substring(0, 200) + "…";
         return msg;
     }
+
+    private static String safeErr(ClawPhonesAPI.ApiException e) {
+        String msg = e.getMessage();
+        if (msg == null || msg.trim().isEmpty()) return "HTTP " + e.statusCode;
+        // Try to extract "detail" from JSON error body
+        try {
+            org.json.JSONObject errJson = new org.json.JSONObject(msg);
+            String detail = errJson.optString("detail", null);
+            if (detail != null && !detail.trim().isEmpty()) return detail;
+        } catch (Exception ignored) {}
+        if (msg.length() > 200) msg = msg.substring(0, 200) + "…";
+        return msg;
+    }
+
+    // ── Data model ─────────────────────────────────────────────────────────────
 
     static final class ChatMessage {
         enum Role { USER, ASSISTANT }
@@ -243,6 +308,8 @@ public class ChatActivity extends Activity {
             this.text = text;
         }
     }
+
+    // ── RecyclerView Adapter ───────────────────────────────────────────────────
 
     static final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.VH> {
         private static final int TYPE_AI = 0;
@@ -263,7 +330,8 @@ public class ChatActivity extends Activity {
         @NonNull
         @Override
         public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            View v = android.view.LayoutInflater.from(parent.getContext()).inflate(R.layout.item_message, parent, false);
+            View v = android.view.LayoutInflater.from(parent.getContext())
+                .inflate(R.layout.item_message, parent, false);
             return new VH(v);
         }
 
@@ -287,11 +355,15 @@ public class ChatActivity extends Activity {
                 super(itemView);
                 text = itemView.findViewById(R.id.message_text);
                 bubble = itemView.findViewById(R.id.message_bubble);
-                text.setMovementMethod(LinkMovementMethod.getInstance());
+                if (text != null) {
+                    text.setMovementMethod(LinkMovementMethod.getInstance());
+                }
             }
 
             void bind(String markdown, boolean isUser) {
-                text.setText(renderMarkdown(markdown));
+                if (text != null) {
+                    text.setText(renderMarkdown(markdown));
+                }
                 if (bubble != null) {
                     android.widget.FrameLayout.LayoutParams lp =
                         (android.widget.FrameLayout.LayoutParams) bubble.getLayoutParams();
@@ -309,14 +381,27 @@ public class ChatActivity extends Activity {
 
         private static CharSequence renderMarkdown(String markdown) {
             if (markdown == null) markdown = "";
-            // Simple Markdown -> HTML conversion (bold/italic/code/links/newlines).
-            String html = TextUtils.htmlEncode(markdown);
-            html = html.replaceAll("`([^`]+)`", "<tt>$1</tt>");
-            html = html.replaceAll("\\*\\*([^*]+)\\*\\*", "<b>$1</b>");
-            html = html.replaceAll("(?<!\\*)\\*([^*]+)\\*(?!\\*)", "<i>$1</i>");
-            html = html.replaceAll("\\[([^\\]]+)\\]\\((https?://[^\\)]+)\\)", "<a href=\"$2\">$1</a>");
-            html = html.replace("\n", "<br/>");
-            return Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY);
+            try {
+                String html = TextUtils.htmlEncode(markdown);
+                // Code blocks (triple backtick → <pre>)
+                html = html.replaceAll("```([\\s\\S]*?)```", "<pre>$1</pre>");
+                // Inline code
+                html = html.replaceAll("`([^`]+)`", "<tt><b>$1</b></tt>");
+                // Bold
+                html = html.replaceAll("\\*\\*([^*]+)\\*\\*", "<b>$1</b>");
+                // Italic
+                html = html.replaceAll("(?<!\\*)\\*([^*]+)\\*(?!\\*)", "<i>$1</i>");
+                // Links
+                html = html.replaceAll("\\[([^\\]]+)\\]\\((https?://[^\\)]+)\\)", "<a href=\"$2\">$1</a>");
+                // Bullet points (- item)
+                html = html.replaceAll("(?m)^- (.+)", "• $1");
+                // Newlines
+                html = html.replace("\n", "<br/>");
+                return Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY);
+            } catch (Exception e) {
+                // Fallback: plain text if rendering fails
+                return markdown;
+            }
         }
     }
 }

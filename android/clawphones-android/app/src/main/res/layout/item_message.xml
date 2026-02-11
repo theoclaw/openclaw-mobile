@@ -21,7 +21,7 @@
             android:id="@+id/message_text"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:maxWidth="280dp"
+            android:maxWidth="300dp"
             android:textColor="@color/clawphones_on_background"
             android:textSize="15sp"
             android:lineSpacingExtra="2dp" />

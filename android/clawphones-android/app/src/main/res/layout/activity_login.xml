@@ -3,82 +3,96 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="20dp"
+    android:padding="24dp"
+    android:gravity="center_horizontal"
     android:background="@color/clawphones_background">
+
+    <View
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="ClawPhones AI"
-        android:textSize="22sp"
+        android:textSize="28sp"
         android:textStyle="bold"
         android:textColor="@color/clawphones_on_background" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:layout_marginBottom="18dp"
-        android:text="Login to chat"
-        android:textSize="13sp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="32dp"
+        android:text="登录开始聊天"
+        android:textSize="14sp"
         android:textColor="@color/clawphones_secondary_text" />
 
     <EditText
         android:id="@+id/login_email"
         android:layout_width="match_parent"
         android:layout_height="52dp"
-        android:hint="Email"
+        android:hint="邮箱"
         android:inputType="textEmailAddress"
         android:background="@drawable/clawphones_input_bg"
         android:paddingStart="14dp"
         android:paddingEnd="14dp"
         android:textColor="@color/clawphones_on_background"
         android:textColorHint="@color/clawphones_secondary_text"
-        android:singleLine="true" />
+        android:singleLine="true"
+        android:textSize="15sp" />
 
     <EditText
         android:id="@+id/login_password"
         android:layout_width="match_parent"
         android:layout_height="52dp"
         android:layout_marginTop="12dp"
-        android:hint="Password (min 8 chars)"
+        android:hint="密码 (至少 8 位)"
         android:inputType="textPassword"
         android:background="@drawable/clawphones_input_bg"
         android:paddingStart="14dp"
         android:paddingEnd="14dp"
         android:textColor="@color/clawphones_on_background"
         android:textColorHint="@color/clawphones_secondary_text"
-        android:singleLine="true" />
+        android:singleLine="true"
+        android:textSize="15sp" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="18dp"
+        android:layout_marginTop="24dp"
         android:orientation="horizontal">
 
         <Button
             android:id="@+id/login_button"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:layout_marginEnd="8dp"
-            android:text="Login"
+            android:text="登录"
             android:textAllCaps="false"
             android:background="@drawable/clawphones_button_bg"
             android:textColor="#1A1A1A"
-            android:textStyle="bold" />
+            android:textStyle="bold"
+            android:textSize="15sp" />
 
         <Button
             android:id="@+id/register_button"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:layout_marginStart="8dp"
-            android:text="Register"
+            android:text="注册"
             android:textAllCaps="false"
             android:background="@drawable/clawphones_button_outline_bg"
-            android:textColor="@color/clawphones_accent" />
+            android:textColor="@color/clawphones_accent"
+            android:textSize="15sp" />
     </LinearLayout>
 
-</LinearLayout>
+    <View
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_weight="2" />
 
+</LinearLayout>
