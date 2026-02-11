@@ -19,16 +19,16 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(viewModel.messages) { message in
-                            MessageRow(message: message)
+                            MessageRow(
+                                message: message,
+                                onRegenerate: message.role == .assistant ? {
+                                    Task { await viewModel.regenerateAssistantMessage(messageId: message.id) }
+                                } : nil,
+                                onDelete: {
+                                    viewModel.deleteMessage(messageId: message.id)
+                                }
+                            )
                                 .id(message.id)
-                        }
-
-                        if viewModel.isLoading {
-                            HStack {
-                                ProgressView()
-                                Spacer()
-                            }
-                            .padding(.top, 4)
                         }
                     }
                     .padding(.horizontal)
@@ -36,10 +36,13 @@ struct ChatView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: viewModel.messages.count) { _ in
-                    scrollToBottom(proxy)
+                    scrollToBottom(proxy, animated: true)
+                }
+                .onChange(of: viewModel.messages.last?.content ?? "") { _ in
+                    scrollToBottom(proxy, animated: false)
                 }
                 .onAppear {
-                    scrollToBottom(proxy)
+                    scrollToBottom(proxy, animated: false)
                 }
             }
 
@@ -76,9 +79,13 @@ struct ChatView: View {
         }
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
         guard let lastId = viewModel.messages.last?.id else { return }
-        withAnimation(.easeOut(duration: 0.2)) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(lastId, anchor: .bottom)
+            }
+        } else {
             proxy.scrollTo(lastId, anchor: .bottom)
         }
     }

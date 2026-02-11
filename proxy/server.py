@@ -1,15 +1,21 @@
 import asyncio
 import base64
+import calendar
 import json
 import os
+import re
 import secrets
+import sqlite3
 import time
+import traceback
 import uuid
+from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import aiosqlite
+import bcrypt
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -17,6 +23,64 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 
 load_dotenv()
+
+
+# -----------------------------
+# Security / Validation
+# -----------------------------
+
+# RFC 5322 (simplified) email regex. We also enforce max length (254) separately.
+_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+)
+
+_LOGIN_FAILURES: Dict[str, List[int]] = {}
+_LOGIN_FAILS_PER_MINUTE = 5
+_LOGIN_FAIL_WINDOW_SECS = 60
+_LOGIN_LOCKOUT_SECS = 300  # 5 minutes
+
+
+def _client_ip(request: Request) -> str:
+    # Prefer X-Forwarded-For when behind a proxy; otherwise fall back to peer address.
+    xff = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
+    if isinstance(xff, str) and xff.strip():
+        return xff.split(",")[0].strip() or "unknown"
+    if request.client and getattr(request.client, "host", None):
+        return str(request.client.host)
+    return "unknown"
+
+
+def _is_valid_email(email_norm: str) -> bool:
+    if not isinstance(email_norm, str):
+        return False
+    if not email_norm or len(email_norm) > 254:
+        return False
+    return _EMAIL_RE.fullmatch(email_norm) is not None
+
+
+def _is_login_rate_limited(ip: str, now: int) -> bool:
+    ts = _LOGIN_FAILURES.get(ip) or []
+    # Keep only what we need to evaluate "5 failures/minute" with a 5-minute lockout.
+    cutoff = now - (_LOGIN_LOCKOUT_SECS + _LOGIN_FAIL_WINDOW_SECS)
+    ts = [t for t in ts if isinstance(t, int) and t >= cutoff]
+    _LOGIN_FAILURES[ip] = ts
+
+    # Determine if the IP is currently within a lockout period:
+    # Find any 5-failures-within-60s group and lock for 5 minutes from the 5th failure.
+    lockout_until = 0
+    if len(ts) >= _LOGIN_FAILS_PER_MINUTE:
+        for i in range(_LOGIN_FAILS_PER_MINUTE - 1, len(ts)):
+            if ts[i] - ts[i - (_LOGIN_FAILS_PER_MINUTE - 1)] <= _LOGIN_FAIL_WINDOW_SECS:
+                lockout_until = max(lockout_until, ts[i] + _LOGIN_LOCKOUT_SECS)
+    return now < lockout_until
+
+
+def _record_login_failure(ip: str, now: int) -> None:
+    ts = _LOGIN_FAILURES.get(ip) or []
+    ts.append(int(now))
+    _LOGIN_FAILURES[ip] = ts
 
 
 # -----------------------------
@@ -62,6 +126,13 @@ LIMITS: Dict[str, TierLimits] = {
 
 _CALL_LLM_BODY: ContextVar[Optional[Dict[str, Any]]] = ContextVar("_CALL_LLM_BODY", default=None)
 
+PERSONA_PROMPTS: Dict[str, str] = {
+    "assistant": "你是 ClawPhones AI 助手，由 Oyster Labs 开发。你聪明、友好、高效。",
+    "coder": "你是一个编程专家，精通各种编程语言和框架。用代码示例回答问题。",
+    "writer": "你是一个写作助手，擅长写文章、邮件、文案。文笔流畅，逻辑清晰。",
+    "translator": "你是一个翻译官，精通中英日韩多语言互译。翻译准确自然。",
+}
+
 
 def _approx_tokens(text: str) -> int:
     # Cheap approximation: ~4 chars per token for mixed CJK/ASCII.
@@ -90,9 +161,80 @@ def _ensure_dir(path: str) -> None:
         os.makedirs(d, exist_ok=True)
 
 
+def _normalize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _gen_device_token() -> str:
+    return "ocw1_" + base64.urlsafe_b64encode(secrets.token_bytes(24)).decode("utf-8").rstrip("=")
+
+
+def _safe_json_loads_object(s: Any) -> Dict[str, Any]:
+    if isinstance(s, dict):
+        return s
+    if not isinstance(s, str) or not s.strip():
+        return {}
+    try:
+        obj = json.loads(s)
+    except Exception:
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def _persona_system_prompt(ai_config: Dict[str, Any]) -> Optional[str]:
+    persona = ai_config.get("persona")
+    if not isinstance(persona, str) or not persona.strip():
+        persona = "assistant"
+    persona = persona.strip()
+
+    if persona == "custom":
+        custom_prompt = ai_config.get("custom_prompt")
+        if isinstance(custom_prompt, str) and custom_prompt.strip():
+            return custom_prompt.strip()
+        # Fall back if custom persona is selected but no prompt provided.
+        return PERSONA_PROMPTS["assistant"]
+
+    return PERSONA_PROMPTS.get(persona) or PERSONA_PROMPTS["assistant"]
+
+
+def _inject_persona_system_message(messages: Any, ai_config: Dict[str, Any]) -> Any:
+    if not isinstance(messages, list):
+        return messages
+    system_prompt = _persona_system_prompt(ai_config)
+    if not system_prompt:
+        return messages
+    return [{"role": "system", "content": system_prompt}] + list(messages)
+
+
+def _utc_day_bounds(ts: Optional[int] = None) -> Tuple[int, int, str]:
+    now = int(ts or time.time())
+    g = time.gmtime(now)
+    day = time.strftime("%Y-%m-%d", g)
+    start = calendar.timegm((g.tm_year, g.tm_mon, g.tm_mday, 0, 0, 0, 0, 0, 0))
+    end = start + 86400
+    return (start, end, day)
+
+
 async def _init_db() -> None:
     _ensure_dir(TOKEN_DB_PATH)
     async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+              id TEXT PRIMARY KEY,
+              email TEXT UNIQUE NOT NULL,
+              password_hash TEXT,
+              apple_id TEXT UNIQUE,
+              name TEXT DEFAULT '',
+              avatar_url TEXT,
+              tier TEXT DEFAULT 'free',
+              ai_config TEXT DEFAULT '{}',
+              language TEXT DEFAULT 'auto',
+              created_at INTEGER,
+              updated_at INTEGER
+            );
+            """
+        )
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS device_tokens (
@@ -100,10 +242,16 @@ async def _init_db() -> None:
               tier TEXT NOT NULL CHECK (tier IN ('free','pro','max')),
               status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
               note TEXT,
+              user_id TEXT REFERENCES users(id),
               created_at INTEGER NOT NULL
             )
             """
         )
+        # Migration for existing DBs: add user_id to device_tokens.
+        try:
+            await db.execute("ALTER TABLE device_tokens ADD COLUMN user_id TEXT REFERENCES users(id)")
+        except Exception:
+            pass
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS usage_daily (
@@ -140,18 +288,126 @@ async def _init_db() -> None:
         )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_conversations_token_updated ON conversations(device_token, updated_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_device_tokens_user_id ON device_tokens(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
         await db.commit()
 
 
 async def _get_token_row(token: str) -> Optional[Dict[str, Any]]:
     async with aiosqlite.connect(TOKEN_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        try:
+            async with db.execute(
+                "SELECT token,tier,status,note,created_at,user_id FROM device_tokens WHERE token=?",
+                (token,),
+            ) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+        except sqlite3.OperationalError:
+            # Older DB pre-migration.
+            async with db.execute(
+                "SELECT token,tier,status,note,created_at FROM device_tokens WHERE token=?",
+                (token,),
+            ) as cur:
+                row = await cur.fetchone()
+                if not row:
+                    return None
+                d = dict(row)
+                d["user_id"] = None
+                return d
+
+
+async def _get_user_row_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT token,tier,status,note,created_at FROM device_tokens WHERE token=?",
-            (token,),
+            """
+            SELECT
+              id,
+              email,
+              password_hash,
+              apple_id,
+              name,
+              avatar_url,
+              tier,
+              ai_config,
+              language,
+              created_at,
+              updated_at
+            FROM users
+            WHERE id=?
+            """,
+            (user_id,),
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+
+
+async def _get_user_row_by_email(email: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT
+              id,
+              email,
+              password_hash,
+              apple_id,
+              name,
+              avatar_url,
+              tier,
+              ai_config,
+              language,
+              created_at,
+              updated_at
+            FROM users
+            WHERE email=?
+            """,
+            (email,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def _get_user_row_for_token_optional(token: str) -> Optional[Dict[str, Any]]:
+    # For chat paths: optional enrichment (backward compatible for tokens without user_id).
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            async with db.execute("SELECT user_id FROM device_tokens WHERE token=?", (token,)) as cur:
+                row = await cur.fetchone()
+        except sqlite3.OperationalError:
+            return None
+    if not row or not row["user_id"]:
+        return None
+    return await _get_user_row_by_id(str(row["user_id"]))
+
+
+async def _require_user(request: Request) -> Tuple[str, Dict[str, Any]]:
+    token = _require_device_token(request)
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            async with db.execute(
+                "SELECT token,tier,status,user_id FROM device_tokens WHERE token=?",
+                (token,),
+            ) as cur:
+                trow = await cur.fetchone()
+        except sqlite3.OperationalError:
+            trow = None
+
+    if not trow:
+        raise HTTPException(status_code=401, detail="invalid token")
+    if (trow["status"] or "") != "active":
+        raise HTTPException(status_code=403, detail="token disabled")
+    user_id = trow["user_id"]
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user")
+
+    user = await _get_user_row_by_id(str(user_id))
+    if not user:
+        raise HTTPException(status_code=401, detail="user not found")
+    return (token, user)
 
 
 async def _get_tier_for_token(token: str) -> str:
@@ -233,17 +489,65 @@ async def _call_openai_compatible(
     base_url: str,
     api_key: str,
     body: Dict[str, Any],
-) -> Dict[str, Any]:
+    stream: bool = False,
+) -> Any:
     url = f"{base_url}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(url, headers=headers, json=body)
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=resp.status_code, detail=resp.text)
-        return resp.json()
+
+    if not stream:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            return resp.json()
+
+    async def gen() -> AsyncIterator[str]:
+        # Allow long-lived responses. We'll keep the client connection alive with SSE keepalives downstream.
+        timeout = httpx.Timeout(60.0, connect=10.0, read=None)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code >= 400:
+                    raw = await resp.aread()
+                    text = raw.decode("utf-8", errors="replace")
+                    raise HTTPException(status_code=resp.status_code, detail=text)
+
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    # OpenAI-style SSE can include comments like ": ping".
+                    if line.startswith(":"):
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+
+                    data = line[len("data:") :].strip()
+                    if not data:
+                        continue
+                    if data == "[DONE]":
+                        break
+
+                    try:
+                        obj = json.loads(data)
+                    except Exception:
+                        continue
+
+                    choices = obj.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    c0 = choices[0]
+                    if not isinstance(c0, dict):
+                        continue
+                    delta = c0.get("delta")
+                    if not isinstance(delta, dict):
+                        continue
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        yield content
+
+    return gen()
 
 
 async def _call_anthropic_messages(
@@ -367,6 +671,22 @@ def _openai_sse_one_chunk(payload: Dict[str, Any]) -> AsyncIterator[bytes]:
     return gen()
 
 
+def _sse_data(obj: Dict[str, Any]) -> bytes:
+    return (f"data: {json.dumps(obj, ensure_ascii=False)}\n\n").encode("utf-8")
+
+
+def _sse_comment(text: str) -> bytes:
+    t = " ".join((text or "").split())
+    return (f": {t}\n\n").encode("utf-8")
+
+
+def _sse_error_once(message: str) -> AsyncIterator[bytes]:
+    async def gen() -> AsyncIterator[bytes]:
+        yield _sse_data({"error": str(message or "error"), "done": True})
+
+    return gen()
+
+
 app = FastAPI(title="OpenClaw Proxy", version="0.1.0")
 
 
@@ -378,6 +698,360 @@ async def _startup() -> None:
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     return {"ok": True, "ts": int(time.time())}
+
+
+@app.post("/v1/auth/register")
+async def auth_register(request: Request) -> Any:
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid json body")
+
+    email = body.get("email")
+    password = body.get("password")
+    name = body.get("name") if body.get("name") is not None else ""
+
+    if not isinstance(email, str) or not email.strip():
+        raise HTTPException(status_code=400, detail="email required")
+    if not isinstance(password, str) or not password:
+        raise HTTPException(status_code=400, detail="password required")
+    if not isinstance(name, str):
+        raise HTTPException(status_code=400, detail="name must be a string")
+
+    email_norm = _normalize_email(email)
+    if not _is_valid_email(email_norm):
+        raise HTTPException(status_code=400, detail="Invalid email format")
+    if len(password) < 8 or len(password) > 72:
+        raise HTTPException(status_code=400, detail="Password must be 8-72 characters")
+    now = int(time.time())
+    user_id = str(uuid.uuid4())
+
+    pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+    # New users default to free tier; token tier is tied to user tier.
+    tier = "free"
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        try:
+            await db.execute(
+                """
+                INSERT INTO users(id,email,password_hash,name,tier,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?)
+                """,
+                (user_id, email_norm, pw_hash, name.strip(), tier, now, now),
+            )
+        except sqlite3.IntegrityError:
+            # Unique constraint on users.email.
+            raise HTTPException(status_code=409, detail="email already registered")
+
+        token: Optional[str] = None
+        for _ in range(5):
+            candidate = _gen_device_token()
+            try:
+                await db.execute(
+                    "INSERT INTO device_tokens(token,tier,status,note,user_id,created_at) VALUES (?,?,?,?,?,?)",
+                    (candidate, tier, "active", None, user_id, now),
+                )
+                token = candidate
+                break
+            except sqlite3.IntegrityError:
+                continue
+
+        if not token:
+            raise HTTPException(status_code=500, detail="failed to allocate token")
+
+        await db.commit()
+
+    return {"user_id": user_id, "token": token, "tier": tier, "created_at": now}
+
+
+@app.post("/v1/auth/login")
+async def auth_login(request: Request) -> Any:
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid json body")
+
+    email = body.get("email")
+    password = body.get("password")
+    if not isinstance(email, str) or not email.strip():
+        raise HTTPException(status_code=400, detail="email required")
+    if not isinstance(password, str) or not password:
+        raise HTTPException(status_code=400, detail="password required")
+
+    ip = _client_ip(request)
+    now = int(time.time())
+    if _is_login_rate_limited(ip, now):
+        raise HTTPException(status_code=429, detail="Too many login attempts. Try again in 5 minutes")
+
+    email_norm = _normalize_email(email)
+    user = await _get_user_row_by_email(email_norm)
+    if not user:
+        _record_login_failure(ip, now)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    pw_hash = user.get("password_hash") or ""
+    if not isinstance(pw_hash, str) or not pw_hash:
+        _record_login_failure(ip, now)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    ok = False
+    try:
+        ok = bcrypt.checkpw(password.encode("utf-8"), pw_hash.encode("utf-8"))
+    except Exception:
+        ok = False
+    if not ok:
+        _record_login_failure(ip, now)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    tier = str(user.get("tier") or "free")
+    if tier not in LIMITS:
+        tier = "free"
+
+    user_id = str(user["id"])
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        token: Optional[str] = None
+        for _ in range(5):
+            candidate = _gen_device_token()
+            try:
+                await db.execute(
+                    "INSERT INTO device_tokens(token,tier,status,note,user_id,created_at) VALUES (?,?,?,?,?,?)",
+                    (candidate, tier, "active", None, user_id, now),
+                )
+                token = candidate
+                break
+            except sqlite3.IntegrityError:
+                continue
+
+        if not token:
+            raise HTTPException(status_code=500, detail="failed to allocate token")
+
+        await db.commit()
+
+    # Successful login clears failures for this IP.
+    _LOGIN_FAILURES.pop(ip, None)
+
+    ai_config = _safe_json_loads_object(user.get("ai_config"))
+    return {"user_id": user_id, "token": token, "tier": tier, "name": user.get("name") or "", "ai_config": ai_config}
+
+
+@app.get("/v1/user/profile")
+async def user_get_profile(request: Request) -> Any:
+    _, user = await _require_user(request)
+    return {
+        "user_id": user["id"],
+        "email": user["email"],
+        "name": user.get("name") or "",
+        "avatar_url": user.get("avatar_url"),
+        "tier": user.get("tier") or "free",
+        "language": user.get("language") or "auto",
+        "created_at": user.get("created_at"),
+    }
+
+
+@app.put("/v1/user/profile")
+async def user_put_profile(request: Request) -> Any:
+    _, user = await _require_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid json body")
+
+    name = body.get("name")
+    language = body.get("language")
+    if name is not None and not isinstance(name, str):
+        raise HTTPException(status_code=400, detail="name must be a string")
+    if language is not None and not isinstance(language, str):
+        raise HTTPException(status_code=400, detail="language must be a string")
+
+    updates: List[str] = []
+    params: List[Any] = []
+    if name is not None:
+        name2 = name.strip()
+        if len(name2) > 100:
+            raise HTTPException(status_code=400, detail="name too long (max 100 chars)")
+        updates.append("name=?")
+        params.append(name2)
+    if language is not None:
+        updates.append("language=?")
+        params.append(language.strip() or "auto")
+
+    if updates:
+        now = int(time.time())
+        updates.append("updated_at=?")
+        params.append(now)
+        params.append(str(user["id"]))
+        sql = f"UPDATE users SET {', '.join(updates)} WHERE id=?"
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            await db.execute(sql, tuple(params))
+            await db.commit()
+        user = await _get_user_row_by_id(str(user["id"])) or user
+
+    return {
+        "user_id": user["id"],
+        "email": user["email"],
+        "name": user.get("name") or "",
+        "avatar_url": user.get("avatar_url"),
+        "tier": user.get("tier") or "free",
+        "language": user.get("language") or "auto",
+        "created_at": user.get("created_at"),
+    }
+
+
+@app.put("/v1/user/password")
+async def user_put_password(request: Request) -> Any:
+    _, user = await _require_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid json body")
+
+    old_password = body.get("old_password")
+    new_password = body.get("new_password")
+    if not isinstance(old_password, str) or not old_password:
+        raise HTTPException(status_code=400, detail="old_password required")
+    if not isinstance(new_password, str) or not new_password:
+        raise HTTPException(status_code=400, detail="new_password required")
+
+    pw_hash = user.get("password_hash") or ""
+    if not isinstance(pw_hash, str) or not pw_hash:
+        raise HTTPException(status_code=400, detail="password not set")
+
+    ok = False
+    try:
+        ok = bcrypt.checkpw(old_password.encode("utf-8"), pw_hash.encode("utf-8"))
+    except Exception:
+        ok = False
+    if not ok:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+
+    new_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    now = int(time.time())
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET password_hash=?, updated_at=? WHERE id=?",
+            (new_hash, now, str(user["id"])),
+        )
+        await db.commit()
+    return {"updated": True}
+
+
+@app.get("/v1/user/plan")
+async def user_get_plan(request: Request) -> Any:
+    _, user = await _require_user(request)
+    start_ts, end_ts, day = _utc_day_bounds()
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT COUNT(1) AS cnt
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            JOIN device_tokens dt ON dt.token = c.device_token
+            WHERE dt.user_id = ?
+              AND m.role = 'user'
+              AND m.created_at >= ?
+              AND m.created_at < ?
+            """,
+            (str(user["id"]), int(start_ts), int(end_ts)),
+        ) as cur:
+            row = await cur.fetchone()
+            usage_messages = int((row["cnt"] if row else 0) or 0)
+
+    tier = str(user.get("tier") or "free")
+    if tier not in LIMITS:
+        tier = "free"
+
+    plans = [
+        {
+            "tier": t,
+            "limits": {
+                "max_context_tokens": LIMITS[t].max_context_tokens,
+                "max_output_tokens": LIMITS[t].max_output_tokens,
+                "daily_tokens": LIMITS[t].daily_tokens,
+            },
+        }
+        for t in ("free", "pro", "max")
+    ]
+
+    return {
+        "tier": tier,
+        "current_plan": tier,
+        "usage": {"day": day, "messages": usage_messages},
+        "available_plans": plans,
+        "plans": plans,
+    }
+
+
+@app.get("/v1/user/ai-config")
+async def user_get_ai_config(request: Request) -> Any:
+    _, user = await _require_user(request)
+    ai_config = _safe_json_loads_object(user.get("ai_config"))
+    return {"ai_config": ai_config, "personas": list(PERSONA_PROMPTS.keys()) + ["custom"]}
+
+
+@app.put("/v1/user/ai-config")
+async def user_put_ai_config(request: Request) -> Any:
+    _, user = await _require_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid json body")
+
+    persona = body.get("persona")
+    custom_prompt = body.get("custom_prompt")
+    temperature = body.get("temperature")
+
+    allowed_personas = set(PERSONA_PROMPTS.keys()) | {"custom"}
+    if persona is not None:
+        if not isinstance(persona, str) or not persona.strip():
+            raise HTTPException(status_code=400, detail="persona must be a string")
+        persona = persona.strip()
+        if persona not in allowed_personas:
+            raise HTTPException(status_code=400, detail="invalid persona")
+
+    if custom_prompt is not None and not isinstance(custom_prompt, str):
+        raise HTTPException(status_code=400, detail="custom_prompt must be a string")
+    if isinstance(custom_prompt, str) and len(custom_prompt) > 2000:
+        raise HTTPException(status_code=400, detail="custom_prompt too long (max 2000 chars)")
+
+    if temperature is not None and not isinstance(temperature, (int, float)):
+        raise HTTPException(status_code=400, detail="temperature must be a number")
+
+    ai_config = _safe_json_loads_object(user.get("ai_config"))
+    if persona is not None:
+        ai_config["persona"] = persona
+    if custom_prompt is not None:
+        ai_config["custom_prompt"] = custom_prompt
+    if temperature is not None:
+        t = float(temperature)
+        if t < 0:
+            t = 0.0
+        elif t > 2:
+            t = 2.0
+        ai_config["temperature"] = t
+
+    now = int(time.time())
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        await db.execute(
+            "UPDATE users SET ai_config=?, updated_at=? WHERE id=?",
+            (json.dumps(ai_config, ensure_ascii=False), now, str(user["id"])),
+        )
+        await db.commit()
+
+    return {"ai_config": ai_config, "personas": list(PERSONA_PROMPTS.keys()) + ["custom"]}
 
 
 async def _call_llm(
@@ -515,6 +1189,15 @@ async def _handle_chat_completions(request: Request, forced_provider: Optional[s
         raise HTTPException(status_code=400, detail="request body must be valid JSON")
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="invalid json body")
+
+    # Optional: apply user-level ai_config when this token is linked to a user.
+    user = await _get_user_row_for_token_optional(token)
+    if user:
+        ai_config = _safe_json_loads_object(user.get("ai_config"))
+        if isinstance(body.get("messages"), list):
+            body["messages"] = _inject_persona_system_message(body.get("messages"), ai_config)
+        if body.get("temperature") is None and isinstance(ai_config.get("temperature"), (int, float)):
+            body["temperature"] = float(ai_config["temperature"])
 
     # Figure out tier from token DB.
     tier = await _get_tier_for_token(token)
@@ -735,7 +1418,29 @@ async def conversation_chat(conversation_id: str, request: Request) -> Any:
     oai_messages = [{"role": r["role"], "content": r["content"]} for r in rows]
 
     # Step 6: reuse existing LLM routing/limits/quota logic.
-    completion = await _call_llm(token=device_token, tier=tier, messages=oai_messages, forced_provider=None, wants_stream=False)
+    user = await _get_user_row_for_token_optional(device_token)
+    ai_config: Dict[str, Any] = _safe_json_loads_object(user.get("ai_config")) if user else {}
+    if user:
+        oai_messages = _inject_persona_system_message(oai_messages, ai_config)
+
+    overrides: Dict[str, Any] = {}
+    if isinstance(ai_config.get("temperature"), (int, float)):
+        overrides["temperature"] = float(ai_config["temperature"])
+
+    if overrides:
+        ctx = _CALL_LLM_BODY.set(overrides)
+        try:
+            completion = await _call_llm(
+                token=device_token,
+                tier=tier,
+                messages=oai_messages,
+                forced_provider=None,
+                wants_stream=False,
+            )
+        finally:
+            _CALL_LLM_BODY.reset(ctx)
+    else:
+        completion = await _call_llm(token=device_token, tier=tier, messages=oai_messages, forced_provider=None, wants_stream=False)
 
     # Step 7: extract assistant content
     choice0 = (completion.get("choices") or [{}])[0] or {}
@@ -768,6 +1473,270 @@ async def conversation_chat(conversation_id: str, request: Request) -> Any:
         "conversation_id": conversation_id,
         "created_at": assistant_now,
     }
+
+
+@app.post("/v1/conversations/{conversation_id}/chat/stream")
+async def conversation_chat_stream(conversation_id: str, request: Request) -> Any:
+    device_token = _require_device_token(request)
+    tier = await _get_tier_for_token(device_token)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return StreamingResponse(_sse_error_once("request body must be valid JSON"), media_type="text/event-stream")
+    if not isinstance(body, dict):
+        return StreamingResponse(_sse_error_once("invalid json body"), media_type="text/event-stream")
+
+    user_text = body.get("message")
+    if not isinstance(user_text, str):
+        return StreamingResponse(_sse_error_once("message must be a string"), media_type="text/event-stream")
+    user_text = user_text.strip()
+    if not user_text:
+        return StreamingResponse(_sse_error_once("message must be non-empty"), media_type="text/event-stream")
+    if len(user_text) > 50_000:
+        return StreamingResponse(_sse_error_once("message too long (max 50000 chars)"), media_type="text/event-stream")
+
+    now = int(time.time())
+    user_message_id = str(uuid.uuid4())
+
+    # Step 1: verify ownership + store user message first (required).
+    try:
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT id,title FROM conversations WHERE id=? AND device_token=?",
+                (conversation_id, device_token),
+            ) as cur:
+                conv = await cur.fetchone()
+            if not conv:
+                return StreamingResponse(_sse_error_once("conversation not found"), media_type="text/event-stream")
+
+            await db.execute(
+                "INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES (?,?,?,?,?)",
+                (user_message_id, conversation_id, "user", user_text, now),
+            )
+            title_candidate = _title_from_user_message(user_text) or None
+            await db.execute(
+                """
+                UPDATE conversations
+                SET
+                  updated_at = ?,
+                  title = CASE WHEN title IS NULL THEN ? ELSE title END
+                WHERE id=? AND device_token=?
+                """,
+                (now, title_candidate, conversation_id, device_token),
+            )
+            await db.commit()
+
+            # Step 2: read full history -> OpenAI messages
+            async with db.execute(
+                "SELECT role,content FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC",
+                (conversation_id,),
+            ) as cur:
+                rows = await cur.fetchall()
+    except Exception as e:
+        print(f"[chat/stream] internal error: {e!r}")
+        traceback.print_exc()
+
+        async def _gen_internal_error() -> AsyncIterator[bytes]:
+            yield _sse_data({"error": "Internal error"})
+
+        return StreamingResponse(_gen_internal_error(), media_type="text/event-stream")
+
+    oai_messages = [{"role": r["role"], "content": r["content"]} for r in rows]
+
+    # Keep behavior consistent with non-stream chat: optional user persona/system prompt + overrides.
+    user = await _get_user_row_for_token_optional(device_token)
+    ai_config: Dict[str, Any] = _safe_json_loads_object(user.get("ai_config")) if user else {}
+    if user:
+        oai_messages = _inject_persona_system_message(oai_messages, ai_config)
+
+    overrides: Dict[str, Any] = {}
+    if isinstance(ai_config.get("temperature"), (int, float)):
+        overrides["temperature"] = float(ai_config["temperature"])
+
+    async def stream_gen() -> AsyncIterator[bytes]:
+        limits = LIMITS.get(tier) or LIMITS["free"]
+        provider = {"free": "deepseek", "pro": "kimi", "max": "claude"}.get(tier, "deepseek")
+
+        try:
+            # Build OpenAI-compatible request body.
+            if overrides:
+                body2: Dict[str, Any] = dict(overrides)
+                body2["messages"] = oai_messages
+                body2.setdefault("model", "oyster-auto")
+            else:
+                body2 = {"messages": oai_messages, "model": "oyster-auto"}
+
+            messages = body2.get("messages") or []
+            if not isinstance(messages, list):
+                yield _sse_data({"error": "messages must be an array", "done": True})
+                return
+
+            # Truncate oldest messages if needed (tier context limit).
+            messages = _truncate_messages_to_fit(messages, limits.max_context_tokens)
+            body2["messages"] = messages
+
+            prompt_tokens = _messages_approx_tokens(messages)
+            used_prompt, used_completion, _ = await _get_daily_usage(device_token)
+            used_total = used_prompt + used_completion
+            if used_total + prompt_tokens > limits.daily_tokens:
+                yield _sse_data({"error": "daily quota exceeded", "done": True})
+                return
+
+            # Cap output tokens.
+            req_max_tokens = body2.get("max_tokens")
+            if isinstance(req_max_tokens, int) and req_max_tokens > 0:
+                body2["max_tokens"] = min(req_max_tokens, limits.max_output_tokens)
+            else:
+                body2["max_tokens"] = limits.max_output_tokens
+
+            # Upstream streaming.
+            body2["stream"] = True
+
+            if not MOCK_MODE:
+                _require_upstream_key(provider)
+
+            public_model = str(body2.get("model") or "oyster-auto")
+
+            async def _mock_stream() -> AsyncIterator[str]:
+                reply = f"[MOCK:{provider}:{tier}] " + (messages[-1].get("content") if messages else "")
+                # Yield small chunks; we still send one SSE event per character downstream.
+                for ch in reply:
+                    await asyncio.sleep(0)
+                    yield ch
+
+            if MOCK_MODE:
+                delta_iter: AsyncIterator[str] = _mock_stream()
+            elif provider == "deepseek":
+                upstream_body = dict(body2)
+                upstream_body["model"] = DEEPSEEK_MODEL
+                delta_iter = await _call_openai_compatible(
+                    base_url=DEEPSEEK_BASE_URL,
+                    api_key=DEEPSEEK_API_KEY,
+                    body=upstream_body,
+                    stream=True,
+                )
+            elif provider == "kimi":
+                upstream_body = dict(body2)
+                upstream_body["model"] = KIMI_MODEL
+                delta_iter = await _call_openai_compatible(
+                    base_url=KIMI_BASE_URL,
+                    api_key=KIMI_API_KEY,
+                    body=upstream_body,
+                    stream=True,
+                )
+            elif provider == "claude" and CLAUDE_BASE_URL:
+                upstream_body = dict(body2)
+                upstream_body["model"] = CLAUDE_MODEL
+                delta_iter = await _call_openai_compatible(
+                    base_url=CLAUDE_BASE_URL,
+                    api_key=ANTHROPIC_API_KEY,
+                    body=upstream_body,
+                    stream=True,
+                )
+            elif provider == "claude":
+                # Native Anthropic API: fallback to non-stream and drip out locally.
+                body2["stream"] = False
+                anth = await _call_anthropic_messages(body=body2, max_tokens=int(body2["max_tokens"]))
+                completion = _anthropic_to_openai_completion(anth, public_model=public_model)
+                choice0 = (completion.get("choices") or [{}])[0] or {}
+                assistant_msg = choice0.get("message") or {}
+                assistant_content = assistant_msg.get("content") or ""
+                if not isinstance(assistant_content, str):
+                    assistant_content = str(assistant_content)
+
+                async def _one_shot() -> AsyncIterator[str]:
+                    yield assistant_content
+
+                delta_iter = _one_shot()
+            else:
+                yield _sse_data({"error": "unknown provider", "done": True})
+                return
+
+            q: asyncio.Queue[Any] = asyncio.Queue()
+            sentinel = object()
+            producer_exc: Optional[BaseException] = None
+
+            async def _producer() -> None:
+                nonlocal producer_exc
+                try:
+                    async for d in delta_iter:
+                        await q.put(d)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    producer_exc = e
+                finally:
+                    await q.put(sentinel)
+
+            task = asyncio.create_task(_producer())
+
+            assistant_parts: List[str] = []
+            assistant_message_id = str(uuid.uuid4())
+
+            try:
+                while True:
+                    try:
+                        item = await asyncio.wait_for(q.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        yield _sse_comment("keepalive")
+                        continue
+
+                    if item is sentinel:
+                        break
+                    if not isinstance(item, str) or not item:
+                        continue
+
+                    # One SSE event per "token" (approx. per character for true incremental rendering).
+                    for ch in item:
+                        assistant_parts.append(ch)
+                        yield _sse_data({"delta": ch, "done": False})
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await task
+
+            if producer_exc is not None:
+                raise producer_exc
+
+            full_content = "".join(assistant_parts)
+
+            # Save assistant reply to DB before sending final done event.
+            assistant_now = int(time.time())
+            async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+                await db.execute(
+                    "INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES (?,?,?,?,?)",
+                    (assistant_message_id, conversation_id, "assistant", full_content, assistant_now),
+                )
+                await db.execute(
+                    "UPDATE conversations SET updated_at=? WHERE id=? AND device_token=?",
+                    (assistant_now, conversation_id, device_token),
+                )
+                await db.commit()
+
+            completion_tokens = _approx_tokens(full_content)
+            await _bump_daily_usage(device_token, prompt_tokens, completion_tokens)
+
+            yield _sse_data(
+                {
+                    "delta": "",
+                    "done": True,
+                    "message_id": assistant_message_id,
+                    "content": full_content,
+                }
+            )
+        except Exception as e:
+            print(f"[chat/stream] internal error: {e!r}")
+            traceback.print_exc()
+            yield _sse_data({"error": "Internal error"})
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(stream_gen(), media_type="text/event-stream", headers=headers)
 
 
 @app.delete("/v1/conversations/{conversation_id}")

@@ -11,32 +11,45 @@ class DeviceConfig {
     static let shared = DeviceConfig()
     private init() {}
 
-    private let mdmKey = "ai.openclaw.device_token"
-    private let mdmBaseURLKey = "ai.openclaw.base_url"
-    private let mdmModeKey = "ai.openclaw.mode"
+    // Managed App Configuration (MDM) keys (also used for local overrides in dev builds)
+    static let managedDeviceTokenKey = "ai.openclaw.device_token"
+    static let managedBaseURLKey = "ai.openclaw.base_url"
+    static let managedModeKey = "ai.openclaw.mode"
 
-    /// Get device token (priority: MDM → Keychain → nil)
+    /// Get/set device token.
+    /// Priority (read): MDM → Keychain → nil
+    /// Behavior (write): non-empty → Keychain, nil/empty → clear all stored tokens.
     var deviceToken: String? {
-        // 1. MDM Managed App Configuration (highest priority)
-        if let mdmToken = UserDefaults.standard.string(forKey: mdmKey),
-           !mdmToken.isEmpty {
-            return mdmToken
-        }
+        get {
+            // 1. MDM Managed App Configuration (highest priority)
+            if let mdmToken = UserDefaults.standard.string(forKey: Self.managedDeviceTokenKey),
+               !mdmToken.isEmpty {
+                return mdmToken
+            }
 
-        // 2. Keychain (factory pre-installed)
-        if let keychainToken = KeychainHelper.shared.readDeviceToken(),
-           !keychainToken.isEmpty {
-            return keychainToken
-        }
+            // 2. Keychain (factory pre-installed)
+            if let keychainToken = KeychainHelper.shared.readDeviceToken(),
+               !keychainToken.isEmpty {
+                return keychainToken
+            }
 
-        // 3. No token available
-        return nil
+            // 3. No token available
+            return nil
+        }
+        set {
+            let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if trimmed.isEmpty {
+                clearTokens()
+            } else {
+                saveUserToken(trimmed)
+            }
+        }
     }
 
     /// OpenClaw API base URL
     var baseURL: String {
         // Allow MDM override (for testing/staging)
-        if let mdmURL = UserDefaults.standard.string(forKey: mdmBaseURLKey),
+        if let mdmURL = UserDefaults.standard.string(forKey: Self.managedBaseURLKey),
            !mdmURL.isEmpty {
             return mdmURL
         }
@@ -46,7 +59,7 @@ class DeviceConfig {
 
     /// Device mode/tier
     var mode: Mode {
-        if let modeString = UserDefaults.standard.string(forKey: mdmModeKey) {
+        if let modeString = UserDefaults.standard.string(forKey: Self.managedModeKey) {
             return Mode(rawValue: modeString) ?? .auto
         }
         return .auto
@@ -66,12 +79,15 @@ class DeviceConfig {
 
     /// Save user-authenticated token (fallback for non-Oyster devices)
     func saveUserToken(_ token: String) {
+        // Write to BOTH UserDefaults (highest priority in getter) AND Keychain.
+        // This ensures the getter always returns the freshest token.
+        UserDefaults.standard.set(token, forKey: Self.managedDeviceTokenKey)
         _ = KeychainHelper.shared.writeDeviceToken(token)
     }
 
     /// Clear all stored tokens (for testing)
     func clearTokens() {
         KeychainHelper.shared.clearAll()
-        UserDefaults.standard.removeObject(forKey: mdmKey)
+        UserDefaults.standard.removeObject(forKey: Self.managedDeviceTokenKey)
     }
 }

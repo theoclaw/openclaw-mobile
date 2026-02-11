@@ -6,22 +6,45 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var isProvisioned: Bool = DeviceConfig.shared.isProvisioned
+    @StateObject private var auth = AuthViewModel()
+
+    private enum Tab: Hashable {
+        case chat
+        case settings
+    }
+
+    @State private var selectedTab: Tab = .chat
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if isProvisioned {
-                    ConversationListView()
-                } else {
-                    SetupView {
-                        isProvisioned = true
-                    }
-                }
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                ConversationListView()
             }
+            .tabItem {
+                Label("聊天", systemImage: "message")
+            }
+            .tag(Tab.chat)
+
+            NavigationStack {
+                SettingsView()
+            }
+            .tabItem {
+                Label("设置", systemImage: "gearshape")
+            }
+            .tag(Tab.settings)
+        }
+        .environmentObject(auth)
+        .fullScreenCover(isPresented: Binding(
+            get: { !auth.isAuthenticated },
+            set: { _ in }
+        )) {
+            NavigationStack {
+                LoginView()
+            }
+            .environmentObject(auth)
         }
         .onAppear {
-            isProvisioned = DeviceConfig.shared.isProvisioned
+            auth.refreshAuthState()
         }
     }
 }

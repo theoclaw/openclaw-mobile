@@ -4,8 +4,10 @@
 //
 
 import SwiftUI
+import Combine
 
 struct ConversationListView: View {
+    @EnvironmentObject private var auth: AuthViewModel
     @StateObject private var viewModel = ConversationListViewModel()
     @State private var showNewChat: Bool = false
 
@@ -35,22 +37,39 @@ struct ConversationListView: View {
         }
         .navigationTitle("ClawPhones")
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button {
                     showNewChat = true
                 } label: {
                     Image(systemName: "plus")
+                }
+
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    Image(systemName: "person.crop.circle")
                 }
             }
         }
         .navigationDestination(isPresented: $showNewChat) {
             ChatView(conversationId: nil)
         }
-        .task {
-            await viewModel.loadConversations()
+        .task(id: auth.isAuthenticated) {
+            if auth.isAuthenticated {
+                await viewModel.loadConversations()
+            } else {
+                viewModel.conversations = []
+                viewModel.errorMessage = nil
+            }
         }
         .refreshable {
-            await viewModel.loadConversations()
+            if auth.isAuthenticated {
+                await viewModel.loadConversations()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .clawPhonesConversationsDidChange)) { _ in
+            guard auth.isAuthenticated else { return }
+            Task { await viewModel.loadConversations() }
         }
         .overlay {
             if viewModel.isLoading && viewModel.conversations.isEmpty {
