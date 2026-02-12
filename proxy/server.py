@@ -4894,8 +4894,8 @@ async def get_available_tasks(request: Request) -> Any:
         task = dict(r)
         # Exclude internal fields from response
         task.pop("assignments_count", None)
-        task["requirements"] = json.loads(task.get("requirements", "{}"))
-        task["h3_cells"] = json.loads(task.get("h3_cells", "[]"))
+        task["requirements"] = json.loads(task.get("requirements") or "{}")
+        task["h3_cells"] = json.loads(task.get("h3_cells") or "[]")
         tasks.append(task)
 
     return {"tasks": tasks, "count": len(tasks)}
@@ -5115,8 +5115,8 @@ async def get_task(task_id: str, request: Request) -> Any:
                 raise HTTPException(status_code=404, detail="task not found")
 
     task = dict(row)
-    task["requirements"] = json.loads(task.get("requirements", "{}"))
-    task["h3_cells"] = json.loads(task.get("h3_cells", "[]"))
+    task["requirements"] = json.loads(task.get("requirements") or "{}")
+    task["h3_cells"] = json.loads(task.get("h3_cells") or "[]")
 
     return task
 
@@ -5940,11 +5940,11 @@ async def get_health_status(request: Request) -> Any:
         # Calculate overall health stats
         if rows:
             total = len(rows)
-            relay_ok = sum(1 for r in rows if r.get("relay_ok"))
-            backend_ok = sum(1 for r in rows if r.get("backend_ok"))
-            ws_ok = sum(1 for r in rows if r.get("ws_ok"))
-            push_ok = sum(1 for r in rows if r.get("push_ok"))
-            avg_latency = sum(r.get("latency_ms") or 0 for r in rows) // total
+            relay_ok = sum(1 for r in rows if r["relay_ok"])
+            backend_ok = sum(1 for r in rows if r["backend_ok"])
+            ws_ok = sum(1 for r in rows if r["ws_ok"])
+            push_ok = sum(1 for r in rows if r["push_ok"])
+            avg_latency = sum(r["latency_ms"] or 0 for r in rows) // total
 
             status = {
                 "relay_health": f"{relay_ok}/{total}",
@@ -6045,7 +6045,7 @@ async def list_api_keys(request: Request) -> Any:
             {
                 "id": r["id"],
                 "name": r["name"],
-                "permissions": json.loads(r.get("permissions", "{}")),
+                "permissions": json.loads(r["permissions"] or "{}"),
                 "rate_limit": r["rate_limit"],
                 "created_at": r["created_at"],
                 "expires_at": r["expires_at"],
@@ -6136,7 +6136,7 @@ async def list_webhooks(request: Request) -> Any:
             {
                 "id": r["id"],
                 "url": r["url"],
-                "events": json.loads(r.get("events", "[]")),
+                "events": json.loads(r["events"] or "[]"),
                 "is_active": bool(r["is_active"]),
                 "created_at": r["created_at"],
                 "failure_count": r["failure_count"],

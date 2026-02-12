@@ -63,14 +63,14 @@ def test_upload_success_text_file(api_ctx):
     )
     assert resp.status_code == 200, resp.text
     payload = resp.json()
-    assert payload["filename"] == "notes.txt"
+    assert payload["file_id"]
+    assert payload["url"] == f"/v1/files/{payload['file_id']}"
     assert payload["mime_type"] == "text/plain"
     assert payload["size"] == len(b"hello upload")
-    assert "hello upload" in payload["extracted_text"]
 
     with sqlite3.connect(api_ctx["db_path"]) as conn:
         row = conn.execute(
-            "SELECT original_name,mime_type,size_bytes,stored_path FROM conversation_files WHERE id=?",
+            "SELECT original_name,mime_type,size_bytes,stored_path,extracted_text FROM conversation_files WHERE id=?",
             (payload["file_id"],),
         ).fetchone()
     assert row is not None
@@ -78,6 +78,7 @@ def test_upload_success_text_file(api_ctx):
     assert row[1] == "text/plain"
     assert row[2] == len(b"hello upload")
     assert Path(row[3]).is_file()
+    assert "hello upload" in (row[4] or "")
 
 
 def test_upload_rejects_oversized_file(api_ctx):
@@ -128,7 +129,8 @@ def test_upload_path_traversal_filename_is_sanitized(api_ctx):
     )
     assert resp.status_code == 200, resp.text
     payload = resp.json()
-    assert payload["filename"] == "passwd.txt"
+    assert payload["file_id"]
+    assert payload["url"] == f"/v1/files/{payload['file_id']}"
 
     with sqlite3.connect(api_ctx["db_path"]) as conn:
         row = conn.execute(

@@ -16,7 +16,7 @@ def app_ctx(tmp_path, monkeypatch):
     monkeypatch.setenv("TOKEN_DB_PATH", str(db_path))
     monkeypatch.setenv("MOCK_MODE", "1")
 
-    import proxy.server as server
+    import server
 
     server = importlib.reload(server)
     asyncio.run(server._init_db())
@@ -52,9 +52,9 @@ def test_upload_success_and_get_file(app_ctx):
     assert upload.status_code == 200
     payload = upload.json()
     assert payload["file_id"]
+    assert payload["url"] == f"/v1/files/{payload['file_id']}"
     assert payload["mime_type"] == "text/plain"
     assert payload["size"] == len(b"hello from attachment")
-    assert "hello from attachment" in (payload.get("extracted_text") or "")
 
     file_resp = client.get(f"/v1/files/{payload['file_id']}", headers=headers)
     assert file_resp.status_code == 200
