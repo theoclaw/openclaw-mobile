@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import calendar
+import datetime
 import hashlib
 import io
 import json
@@ -1412,6 +1413,42 @@ async def _init_db() -> None:
               rank INTEGER NOT NULL,
               updated_at INTEGER NOT NULL,
               PRIMARY KEY (user_id, period)
+            )
+            """
+        )
+
+        # Edge Compute tables
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compute_jobs (
+                id TEXT PRIMARY KEY,
+                creator_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                requirements TEXT,
+                input_data TEXT,
+                status TEXT DEFAULT 'pending',
+                claimed_by TEXT,
+                claimed_at TEXT,
+                completed_at TEXT,
+                result_data TEXT,
+                priority INTEGER DEFAULT 0,
+                reward REAL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+            """
+        )
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS compute_nodes (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                capabilities TEXT,
+                status TEXT DEFAULT 'offline',
+                last_heartbeat TEXT,
+                total_jobs_completed INTEGER DEFAULT 0,
+                total_compute_hours REAL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
             )
             """
         )
@@ -6696,6 +6733,440 @@ async def get_leaderboard(request: Request) -> Any:
         )
 
     return {"period": period, "leaderboard": leaderboard}
+
+
+# ========================
+# Edge Compute Endpoints
+# ========================
+
+@app.post("/v1/compute/jobs")
+async def create_compute_job(request: Request) -> Any:
+    """Create a new compute job."""
+    try:
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="authorization required")
+        token = auth_header.replace("Bearer ", "").strip()
+        token_row = await _get_token_row(token)
+        if not token_row:
+            raise HTTPException(status_code=401, detail="invalid token")
+
+        user_id = token_row.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="user not found")
+
+        body = await request.json()
+        job_type = body.get("type", "").strip()
+        if not job_type:
+            raise HTTPException(status_code=400, detail="type is required")
+
+        job_id = uuid.uuid4().hex
+        now = datetime.datetime.utcnow().isoformat()
+
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            await db.execute(
+                """
+                INSERT INTO compute_jobs (id, creator_id, type, requirements, input_data, priority, reward, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    user_id,
+                    job_type,
+                    json.dumps(body.get("requirements", {})),
+                    json.dumps(body.get("input_data", {})),
+                    int(body.get("priority", 0)),
+                    float(body.get("reward", 0)),
+                    now,
+                ),
+            )
+            await db.commit()
+
+        return {"ok": True, "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/compute/jobs/available")
+async def get_available_compute_jobs(request: Request) -> Any:
+    """Get list of available compute jobs."""
+    try:
+        job_type = request.query_params.get("type")
+
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            if job_type:
+                async with db.execute(
+                    """
+                    SELECT * FROM compute_jobs
+                    WHERE status='pending' AND type=?
+                    ORDER BY priority DESC, created_at ASC
+                    """,
+                    (job_type,),
+                ) as cur:
+                    rows = await cur.fetchall()
+            else:
+                async with db.execute(
+                    """
+                    SELECT * FROM compute_jobs
+                    WHERE status='pending'
+                    ORDER BY priority DESC, created_at ASC
+                    """,
+                ) as cur:
+                    rows = await cur.fetchall()
+
+        jobs = []
+        for r in rows:
+            job = dict(r)
+            if job.get("requirements"):
+                job["requirements"] = json.loads(job["requirements"])
+            if job.get("input_data"):
+                job["input_data"] = json.loads(job["input_data"])
+            jobs.append(job)
+
+        return {"jobs": jobs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/compute/jobs/{job_id}/accept")
+async def accept_compute_job(job_id: str, request: Request) -> Any:
+    """Accept a compute job."""
+    try:
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="authorization required")
+        token = auth_header.replace("Bearer ", "").strip()
+        token_row = await _get_token_row(token)
+        if not token_row:
+            raise HTTPException(status_code=401, detail="invalid token")
+
+        user_id = token_row.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="user not found")
+
+        body = await request.json()
+        node_id = body.get("node_id", "").strip()
+        if not node_id:
+            raise HTTPException(status_code=400, detail="node_id is required")
+
+        now = datetime.datetime.utcnow().isoformat()
+
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            # Optimistic lock: only update if status is still 'pending'
+            cursor = await db.execute(
+                """
+                UPDATE compute_jobs
+                SET status='claimed', claimed_by=?, claimed_at=?
+                WHERE id=? AND status='pending'
+                """,
+                (node_id, now, job_id),
+            )
+            await db.commit()
+
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=409, detail="job already claimed or not found")
+
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/compute/jobs/{job_id}/results")
+async def submit_compute_results(job_id: str, request: Request) -> Any:
+    """Submit compute job results."""
+    try:
+        body = await request.json()
+        node_id = body.get("node_id", "").strip()
+        if not node_id:
+            raise HTTPException(status_code=400, detail="node_id is required")
+
+        output_data = body.get("output_data")
+        execution_time_ms = body.get("execution_time_ms", 0)
+
+        now = datetime.datetime.utcnow().isoformat()
+
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+
+            # Verify the node claimed this job
+            async with db.execute(
+                "SELECT claimed_by FROM compute_jobs WHERE id=?",
+                (job_id,),
+            ) as cur:
+                job = await cur.fetchone()
+                if not job:
+                    raise HTTPException(status_code=404, detail="job not found")
+                if job["claimed_by"] != node_id:
+                    raise HTTPException(status_code=403, detail="not authorized to submit results for this job")
+
+            # Update job status
+            await db.execute(
+                """
+                UPDATE compute_jobs
+                SET status='completed', result_data=?, completed_at=?
+                WHERE id=?
+                """,
+                (json.dumps(output_data), now, job_id),
+            )
+
+            # Update node stats
+            compute_hours = execution_time_ms / 3600000.0
+            await db.execute(
+                """
+                UPDATE compute_nodes
+                SET total_jobs_completed = total_jobs_completed + 1,
+                    total_compute_hours = total_compute_hours + ?
+                WHERE id=?
+                """,
+                (compute_hours, node_id),
+            )
+
+            await db.commit()
+
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/compute/jobs/mine")
+async def get_my_compute_jobs(request: Request) -> Any:
+    """Get compute jobs created by or assigned to the authenticated user."""
+    try:
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="authorization required")
+        token = auth_header.replace("Bearer ", "").strip()
+        token_row = await _get_token_row(token)
+        if not token_row:
+            raise HTTPException(status_code=401, detail="invalid token")
+
+        user_id = token_row.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="user not found")
+
+        role = request.query_params.get("role", "both")
+
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+
+            if role == "creator":
+                query = "SELECT * FROM compute_jobs WHERE creator_id=? ORDER BY created_at DESC"
+                params = (user_id,)
+            elif role == "worker":
+                # Get node_ids for this user
+                async with db.execute(
+                    "SELECT id FROM compute_nodes WHERE user_id=?",
+                    (user_id,),
+                ) as cur:
+                    node_rows = await cur.fetchall()
+                    node_ids = [r["id"] for r in node_rows]
+
+                if not node_ids:
+                    return {"jobs": []}
+
+                placeholders = ",".join("?" * len(node_ids))
+                query = f"SELECT * FROM compute_jobs WHERE claimed_by IN ({placeholders}) ORDER BY created_at DESC"
+                params = tuple(node_ids)
+            else:  # both
+                # Get node_ids for this user
+                async with db.execute(
+                    "SELECT id FROM compute_nodes WHERE user_id=?",
+                    (user_id,),
+                ) as cur:
+                    node_rows = await cur.fetchall()
+                    node_ids = [r["id"] for r in node_rows]
+
+                if node_ids:
+                    placeholders = ",".join("?" * len(node_ids))
+                    query = f"SELECT * FROM compute_jobs WHERE creator_id=? OR claimed_by IN ({placeholders}) ORDER BY created_at DESC"
+                    params = (user_id,) + tuple(node_ids)
+                else:
+                    query = "SELECT * FROM compute_jobs WHERE creator_id=? ORDER BY created_at DESC"
+                    params = (user_id,)
+
+            async with db.execute(query, params) as cur:
+                rows = await cur.fetchall()
+
+        jobs = []
+        for r in rows:
+            job = dict(r)
+            if job.get("requirements"):
+                job["requirements"] = json.loads(job["requirements"])
+            if job.get("input_data"):
+                job["input_data"] = json.loads(job["input_data"])
+            if job.get("result_data"):
+                job["result_data"] = json.loads(job["result_data"])
+            jobs.append(job)
+
+        return {"jobs": jobs}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/compute/nodes/register")
+async def register_compute_node(request: Request) -> Any:
+    """Register a compute node."""
+    try:
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="authorization required")
+        token = auth_header.replace("Bearer ", "").strip()
+        token_row = await _get_token_row(token)
+        if not token_row:
+            raise HTTPException(status_code=401, detail="invalid token")
+
+        user_id = token_row.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="user not found")
+
+        body = await request.json()
+        node_id = body.get("node_id", "").strip()
+        if not node_id:
+            raise HTTPException(status_code=400, detail="node_id is required")
+
+        capabilities = body.get("capabilities", {})
+        now = datetime.datetime.utcnow().isoformat()
+
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO compute_nodes (id, user_id, capabilities, status, last_heartbeat, created_at)
+                VALUES (?, ?, ?, 'online', ?, ?)
+                """,
+                (node_id, user_id, json.dumps(capabilities), now, now),
+            )
+            await db.commit()
+
+        return {"ok": True, "node_id": node_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/compute/stats")
+async def get_compute_stats(request: Request) -> Any:
+    """Get compute platform statistics."""
+    try:
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+
+            # Job stats
+            async with db.execute(
+                """
+                SELECT
+                    COUNT(*) as total_jobs,
+                    SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed
+                FROM compute_jobs
+                """,
+            ) as cur:
+                job_stats = await cur.fetchone()
+
+            # Node stats
+            async with db.execute(
+                """
+                SELECT
+                    COUNT(*) as total_nodes,
+                    SUM(CASE WHEN status='online' THEN 1 ELSE 0 END) as nodes_online,
+                    SUM(total_compute_hours) as total_compute_hours
+                FROM compute_nodes
+                """,
+            ) as cur:
+                node_stats = await cur.fetchone()
+
+        return {
+            "total_jobs": job_stats["total_jobs"] or 0,
+            "pending": job_stats["pending"] or 0,
+            "completed": job_stats["completed"] or 0,
+            "failed": job_stats["failed"] or 0,
+            "nodes_online": node_stats["nodes_online"] or 0,
+            "total_compute_hours": node_stats["total_compute_hours"] or 0.0,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/compute/earnings")
+async def get_compute_earnings(request: Request) -> Any:
+    """Get compute earnings for the authenticated user."""
+    try:
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="authorization required")
+        token = auth_header.replace("Bearer ", "").strip()
+        token_row = await _get_token_row(token)
+        if not token_row:
+            raise HTTPException(status_code=401, detail="invalid token")
+
+        user_id = token_row.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="user not found")
+
+        period = request.query_params.get("period", "all")
+
+        async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+
+            # Get node_ids for this user
+            async with db.execute(
+                "SELECT id FROM compute_nodes WHERE user_id=?",
+                (user_id,),
+            ) as cur:
+                node_rows = await cur.fetchall()
+                node_ids = [r["id"] for r in node_rows]
+
+            if not node_ids:
+                return {
+                    "total_earned": 0,
+                    "jobs_completed": 0,
+                    "avg_reward": 0,
+                    "by_period": [],
+                }
+
+            placeholders = ",".join("?" * len(node_ids))
+
+            # Total earnings
+            query = f"""
+                SELECT
+                    SUM(reward) as total_earned,
+                    COUNT(*) as jobs_completed,
+                    AVG(reward) as avg_reward
+                FROM compute_jobs
+                WHERE claimed_by IN ({placeholders}) AND status='completed'
+            """
+
+            # Add period filter if specified
+            if period == "day":
+                query += " AND datetime(completed_at) >= datetime('now', '-1 day')"
+            elif period == "week":
+                query += " AND datetime(completed_at) >= datetime('now', '-7 days')"
+            elif period == "month":
+                query += " AND datetime(completed_at) >= datetime('now', '-30 days')"
+
+            async with db.execute(query, tuple(node_ids)) as cur:
+                stats = await cur.fetchone()
+
+        return {
+            "total_earned": stats["total_earned"] or 0,
+            "jobs_completed": stats["jobs_completed"] or 0,
+            "avg_reward": stats["avg_reward"] or 0,
+            "by_period": [],  # Can be enhanced later with detailed breakdown
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

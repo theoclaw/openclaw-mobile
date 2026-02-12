@@ -1384,6 +1384,609 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true });
   }
 
+  // ===== SPRINT 14: TASK DISTRIBUTION =====
+
+  // Helper functions for task management
+  function readJsonFile(path, defaultValue) {
+    if (!existsSync(path)) return defaultValue;
+    try {
+      return JSON.parse(readFileSync(path, 'utf8'));
+    } catch {
+      return defaultValue;
+    }
+  }
+
+  function writeJsonFile(path, data) {
+    try {
+      writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
+    } catch {
+      // Silent fail for MVP
+    }
+  }
+
+  // Simple Haversine distance in km
+  function haversineDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Earth radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
+  // POST /v1/tasks/distribute - distribute a new task
+  // { task_id, type, location: {lat, lon}, radius_km, requirements, reward, expires_at }
+  if (req.method === 'POST' && url.pathname === '/v1/tasks/distribute') {
+    try {
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const task_id = typeof body?.task_id === 'string' ? body.task_id.trim() : newId('task');
+      const type = typeof body?.type === 'string' ? body.type.trim() : '';
+      if (!type) return json(res, 400, { ok: false, error: 'missing type' });
+
+      const lat = clampNumber(Number(body?.location?.lat), -90, 90);
+      const lon = clampNumber(Number(body?.location?.lon), -180, 180);
+      if (lat == null || lon == null) {
+        return json(res, 400, { ok: false, error: 'missing or invalid location' });
+      }
+
+      const radius_km = Number(body?.radius_km ?? 5);
+      if (!Number.isFinite(radius_km) || radius_km < 0.1) {
+        return json(res, 400, { ok: false, error: 'invalid radius_km' });
+      }
+
+      const requirements = body?.requirements ?? {};
+      const reward = Number(body?.reward ?? 0);
+      const expires_at = typeof body?.expires_at === 'string' ? body.expires_at : null;
+
+      // Calculate H3 cell
+      let h3_cell;
+      try {
+        h3_cell = latLngToCell(lat, lon, 9);
+      } catch {
+        return json(res, 400, { ok: false, error: 'failed to compute H3 cell' });
+      }
+
+      const tasksPath = join(DATA_DIR, 'tasks.json');
+      const tasks = readJsonFile(tasksPath, { tasks: {} });
+
+      tasks.tasks[task_id] = {
+        task_id,
+        type,
+        location: { lat, lon },
+        radius_km,
+        requirements,
+        reward,
+        expires_at,
+        h3_cell,
+        status: 'open',
+        created_at: nowIso()
+      };
+
+      writeJsonFile(tasksPath, tasks);
+      return json(res, 200, { ok: true, task_id, h3_cell });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // GET /v1/tasks/available - get available tasks near location
+  // ?lat=X&lon=Y&radius=Z
+  if (req.method === 'GET' && url.pathname === '/v1/tasks/available') {
+    try {
+      const lat = Number(url.searchParams.get('lat'));
+      const lon = Number(url.searchParams.get('lon'));
+      const radius = Number(url.searchParams.get('radius') ?? '10');
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return json(res, 400, { ok: false, error: 'missing lat/lon' });
+      }
+
+      const tasksPath = join(DATA_DIR, 'tasks.json');
+      const tasks = readJsonFile(tasksPath, { tasks: {} });
+
+      const now = Date.now();
+      const available = [];
+
+      for (const task of Object.values(tasks.tasks || {})) {
+        if (task.status !== 'open') continue;
+
+        // Check expiration
+        if (task.expires_at && Date.parse(task.expires_at) < now) {
+          task.status = 'expired';
+          continue;
+        }
+
+        // Check distance
+        const distance = haversineDistance(lat, lon, task.location.lat, task.location.lon);
+        if (distance <= radius) {
+          available.push({ ...task, distance_km: Math.round(distance * 100) / 100 });
+        }
+      }
+
+      // Update tasks file if any expired
+      writeJsonFile(tasksPath, tasks);
+
+      available.sort((a, b) => a.distance_km - b.distance_km);
+      return json(res, 200, { ok: true, tasks: available });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // POST /v1/tasks/:id/claim - claim a task
+  if (req.method === 'POST' && url.pathname.match(/^\/v1\/tasks\/[^/]+\/claim$/)) {
+    try {
+      const match = url.pathname.match(/^\/v1\/tasks\/([^/]+)\/claim$/);
+      const task_id = match[1];
+
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const node_id = typeof body?.node_id === 'string' ? body.node_id.trim() : '';
+      if (!node_id) return json(res, 400, { ok: false, error: 'missing node_id' });
+
+      const tasksPath = join(DATA_DIR, 'tasks.json');
+      const tasks = readJsonFile(tasksPath, { tasks: {} });
+
+      const task = tasks.tasks[task_id];
+      if (!task) return json(res, 404, { ok: false, error: 'task not found' });
+      if (task.status !== 'open') {
+        return json(res, 409, { ok: false, error: 'task not available', status: task.status });
+      }
+
+      task.status = 'claimed';
+      task.claimed_by = node_id;
+      task.claimed_at = nowIso();
+      task.last_heartbeat = nowIso();
+
+      writeJsonFile(tasksPath, tasks);
+      return json(res, 200, { ok: true, task });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // POST /v1/tasks/:id/heartbeat - update task progress
+  if (req.method === 'POST' && url.pathname.match(/^\/v1\/tasks\/[^/]+\/heartbeat$/)) {
+    try {
+      const match = url.pathname.match(/^\/v1\/tasks\/([^/]+)\/heartbeat$/);
+      const task_id = match[1];
+
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const progress_pct = Number(body?.progress_pct ?? 0);
+      if (!Number.isFinite(progress_pct) || progress_pct < 0 || progress_pct > 100) {
+        return json(res, 400, { ok: false, error: 'invalid progress_pct (expected 0..100)' });
+      }
+
+      const tasksPath = join(DATA_DIR, 'tasks.json');
+      const tasks = readJsonFile(tasksPath, { tasks: {} });
+
+      const task = tasks.tasks[task_id];
+      if (!task) return json(res, 404, { ok: false, error: 'task not found' });
+
+      task.last_heartbeat = nowIso();
+      task.progress_pct = progress_pct;
+
+      writeJsonFile(tasksPath, tasks);
+      return json(res, 200, { ok: true, task_id, progress_pct });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // POST /v1/tasks/:id/results - submit task results
+  if (req.method === 'POST' && url.pathname.match(/^\/v1\/tasks\/[^/]+\/results$/)) {
+    try {
+      const match = url.pathname.match(/^\/v1\/tasks\/([^/]+)\/results$/);
+      const task_id = match[1];
+
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const tasksPath = join(DATA_DIR, 'tasks.json');
+      const tasks = readJsonFile(tasksPath, { tasks: {} });
+
+      const task = tasks.tasks[task_id];
+      if (!task) return json(res, 404, { ok: false, error: 'task not found' });
+
+      task.status = 'completed';
+      task.completed_at = nowIso();
+      task.results = body?.results ?? {};
+
+      writeJsonFile(tasksPath, tasks);
+
+      // Append to results log
+      const resultsPath = join(DATA_DIR, 'task-results.jsonl');
+      appendFileSync(resultsPath, JSON.stringify({
+        task_id,
+        completed_at: task.completed_at,
+        claimed_by: task.claimed_by,
+        results: task.results
+      }) + '\n');
+
+      return json(res, 200, { ok: true, task_id, status: 'completed' });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // GET /v1/tasks/stats - get task statistics
+  if (req.method === 'GET' && url.pathname === '/v1/tasks/stats') {
+    try {
+      const tasksPath = join(DATA_DIR, 'tasks.json');
+      const tasks = readJsonFile(tasksPath, { tasks: {} });
+
+      const stats = {
+        open: 0,
+        claimed: 0,
+        completed: 0,
+        expired: 0,
+        total: 0
+      };
+
+      const now = Date.now();
+      for (const task of Object.values(tasks.tasks || {})) {
+        stats.total++;
+        if (task.expires_at && Date.parse(task.expires_at) < now && task.status !== 'completed') {
+          stats.expired++;
+        } else {
+          stats[task.status] = (stats[task.status] || 0) + 1;
+        }
+      }
+
+      return json(res, 200, { ok: true, stats });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // ===== SPRINT 15: EDGE COMPUTE RELAY =====
+
+  // POST /v1/compute/nodes/register - register compute node
+  if (req.method === 'POST' && url.pathname === '/v1/compute/nodes/register') {
+    try {
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const node_id = typeof body?.node_id === 'string' ? body.node_id.trim() : newId('compute');
+      const capabilities = Array.isArray(body?.capabilities) ? body.capabilities : [];
+
+      const nodesPath = join(DATA_DIR, 'compute-nodes.json');
+      const nodes = readJsonFile(nodesPath, { nodes: {} });
+
+      nodes.nodes[node_id] = {
+        node_id,
+        capabilities,
+        registered_at: nowIso(),
+        last_heartbeat: nowIso(),
+        status: 'online'
+      };
+
+      writeJsonFile(nodesPath, nodes);
+      return json(res, 200, { ok: true, node_id, capabilities });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // GET /v1/compute/jobs/poll - poll for available jobs
+  // ?node_id=X
+  if (req.method === 'GET' && url.pathname === '/v1/compute/jobs/poll') {
+    try {
+      const node_id = url.searchParams.get('node_id');
+      if (!node_id) return json(res, 400, { ok: false, error: 'missing node_id' });
+
+      const nodesPath = join(DATA_DIR, 'compute-nodes.json');
+      const nodes = readJsonFile(nodesPath, { nodes: {} });
+
+      const node = nodes.nodes[node_id];
+      if (!node) return json(res, 404, { ok: false, error: 'node not found' });
+
+      const capabilities = new Set(node.capabilities || []);
+
+      const jobsPath = join(DATA_DIR, 'compute-jobs.json');
+      const jobs = readJsonFile(jobsPath, { jobs: {} });
+
+      // Find first matching job
+      for (const job of Object.values(jobs.jobs || {})) {
+        if (job.status !== 'pending') continue;
+
+        // Check requirements match capabilities
+        const requirements = job.requirements || [];
+        const matches = requirements.every(req => capabilities.has(req));
+
+        if (matches) {
+          return json(res, 200, { ok: true, job });
+        }
+      }
+
+      return json(res, 200, { ok: true, job: null });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // POST /v1/compute/jobs/:id/claim - claim a compute job
+  if (req.method === 'POST' && url.pathname.match(/^\/v1\/compute\/jobs\/[^/]+\/claim$/)) {
+    try {
+      const match = url.pathname.match(/^\/v1\/compute\/jobs\/([^/]+)\/claim$/);
+      const job_id = match[1];
+
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const node_id = typeof body?.node_id === 'string' ? body.node_id.trim() : '';
+      if (!node_id) return json(res, 400, { ok: false, error: 'missing node_id' });
+
+      const jobsPath = join(DATA_DIR, 'compute-jobs.json');
+      const jobs = readJsonFile(jobsPath, { jobs: {} });
+
+      const job = jobs.jobs[job_id];
+      if (!job) return json(res, 404, { ok: false, error: 'job not found' });
+      if (job.status !== 'pending') {
+        return json(res, 409, { ok: false, error: 'job not available', status: job.status });
+      }
+
+      job.status = 'claimed';
+      job.claimed_by = node_id;
+      job.claimed_at = nowIso();
+      job.last_heartbeat = nowIso();
+
+      writeJsonFile(jobsPath, jobs);
+      return json(res, 200, { ok: true, job });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // POST /v1/compute/jobs/:id/heartbeat - update job progress
+  if (req.method === 'POST' && url.pathname.match(/^\/v1\/compute\/jobs\/[^/]+\/heartbeat$/)) {
+    try {
+      const match = url.pathname.match(/^\/v1\/compute\/jobs\/([^/]+)\/heartbeat$/);
+      const job_id = match[1];
+
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const progress_pct = Number(body?.progress_pct ?? 0);
+      if (!Number.isFinite(progress_pct) || progress_pct < 0 || progress_pct > 100) {
+        return json(res, 400, { ok: false, error: 'invalid progress_pct (expected 0..100)' });
+      }
+
+      const jobsPath = join(DATA_DIR, 'compute-jobs.json');
+      const jobs = readJsonFile(jobsPath, { jobs: {} });
+
+      const job = jobs.jobs[job_id];
+      if (!job) return json(res, 404, { ok: false, error: 'job not found' });
+
+      job.last_heartbeat = nowIso();
+      job.progress_pct = progress_pct;
+
+      writeJsonFile(jobsPath, jobs);
+      return json(res, 200, { ok: true, job_id, progress_pct });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // POST /v1/compute/jobs/:id/results - submit job results
+  if (req.method === 'POST' && url.pathname.match(/^\/v1\/compute\/jobs\/[^/]+\/results$/)) {
+    try {
+      const match = url.pathname.match(/^\/v1\/compute\/jobs\/([^/]+)\/results$/);
+      const job_id = match[1];
+
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const jobsPath = join(DATA_DIR, 'compute-jobs.json');
+      const jobs = readJsonFile(jobsPath, { jobs: {} });
+
+      const job = jobs.jobs[job_id];
+      if (!job) return json(res, 404, { ok: false, error: 'job not found' });
+
+      job.status = 'completed';
+      job.completed_at = nowIso();
+      job.results = body?.results ?? {};
+
+      writeJsonFile(jobsPath, jobs);
+
+      // Append to results log
+      const resultsPath = join(DATA_DIR, 'compute-results.jsonl');
+      appendFileSync(resultsPath, JSON.stringify({
+        job_id,
+        completed_at: job.completed_at,
+        claimed_by: job.claimed_by,
+        results: job.results
+      }) + '\n');
+
+      return json(res, 200, { ok: true, job_id, status: 'completed' });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // GET /v1/compute/nodes/online - get online compute nodes
+  if (req.method === 'GET' && url.pathname === '/v1/compute/nodes/online') {
+    try {
+      const nodesPath = join(DATA_DIR, 'compute-nodes.json');
+      const nodes = readJsonFile(nodesPath, { nodes: {} });
+
+      const cutoff = Date.now() - 5 * 60 * 1000; // 5 minutes
+      const online = [];
+
+      for (const node of Object.values(nodes.nodes || {})) {
+        const lastHeartbeat = Date.parse(node.last_heartbeat || '');
+        if (Number.isFinite(lastHeartbeat) && lastHeartbeat >= cutoff) {
+          online.push(node);
+        }
+      }
+
+      return json(res, 200, { ok: true, nodes: online, count: online.length });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // POST /v1/compute/jobs - create a new compute job
+  if (req.method === 'POST' && url.pathname === '/v1/compute/jobs') {
+    try {
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const type = typeof body?.type === 'string' ? body.type.trim() : '';
+      if (!type) return json(res, 400, { ok: false, error: 'missing type' });
+
+      const job_id = newId('job');
+      const requirements = Array.isArray(body?.requirements) ? body.requirements : [];
+      const input_data = body?.input_data ?? {};
+      const priority = Number(body?.priority ?? 5);
+      const reward = Number(body?.reward ?? 0);
+
+      const jobsPath = join(DATA_DIR, 'compute-jobs.json');
+      const jobs = readJsonFile(jobsPath, { jobs: {} });
+
+      jobs.jobs[job_id] = {
+        job_id,
+        type,
+        requirements,
+        input_data,
+        priority,
+        reward,
+        status: 'pending',
+        created_at: nowIso()
+      };
+
+      writeJsonFile(jobsPath, jobs);
+      return json(res, 201, { ok: true, job_id, status: 'pending' });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // GET /v1/compute/stats - get compute statistics
+  if (req.method === 'GET' && url.pathname === '/v1/compute/stats') {
+    try {
+      const jobsPath = join(DATA_DIR, 'compute-jobs.json');
+      const jobs = readJsonFile(jobsPath, { jobs: {} });
+
+      const nodesPath = join(DATA_DIR, 'compute-nodes.json');
+      const nodes = readJsonFile(nodesPath, { nodes: {} });
+
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      let onlineNodes = 0;
+      for (const node of Object.values(nodes.nodes || {})) {
+        const lastHeartbeat = Date.parse(node.last_heartbeat || '');
+        if (Number.isFinite(lastHeartbeat) && lastHeartbeat >= cutoff) {
+          onlineNodes++;
+        }
+      }
+
+      const stats = {
+        pending: 0,
+        claimed: 0,
+        completed: 0,
+        failed: 0,
+        total: 0,
+        online_nodes: onlineNodes,
+        total_nodes: Object.keys(nodes.nodes || {}).length
+      };
+
+      for (const job of Object.values(jobs.jobs || {})) {
+        stats.total++;
+        stats[job.status] = (stats[job.status] || 0) + 1;
+      }
+
+      return json(res, 200, { ok: true, stats });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // ===== PUSH PREFERENCES =====
+
+  // GET /v1/push/preferences - get push preferences for a node
+  // ?node_id=X
+  if (req.method === 'GET' && url.pathname === '/v1/push/preferences') {
+    try {
+      const node_id = url.searchParams.get('node_id');
+      if (!node_id) return json(res, 400, { ok: false, error: 'missing node_id' });
+
+      const prefsPath = join(DATA_DIR, 'push-preferences.json');
+      const prefs = readJsonFile(prefsPath, { preferences: {} });
+
+      const nodePrefs = prefs.preferences[node_id] || {
+        node_id,
+        enabled: true,
+        vision_events: true,
+        community_alerts: true,
+        task_updates: true,
+        compute_jobs: true
+      };
+
+      return json(res, 200, { ok: true, preferences: nodePrefs });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
+  // PUT /v1/push/preferences - update push preferences
+  // { node_id, enabled?, vision_events?, community_alerts?, task_updates?, compute_jobs? }
+  if (req.method === 'PUT' && url.pathname === '/v1/push/preferences') {
+    try {
+      const body = await readJson(req);
+      if (body?.__parse_error) {
+        return json(res, 400, { ok: false, error: 'invalid json' });
+      }
+
+      const node_id = typeof body?.node_id === 'string' ? body.node_id.trim() : '';
+      if (!node_id) return json(res, 400, { ok: false, error: 'missing node_id' });
+
+      const prefsPath = join(DATA_DIR, 'push-preferences.json');
+      const prefs = readJsonFile(prefsPath, { preferences: {} });
+
+      const current = prefs.preferences[node_id] || { node_id };
+
+      prefs.preferences[node_id] = {
+        node_id,
+        enabled: typeof body?.enabled === 'boolean' ? body.enabled : current.enabled ?? true,
+        vision_events: typeof body?.vision_events === 'boolean' ? body.vision_events : current.vision_events ?? true,
+        community_alerts: typeof body?.community_alerts === 'boolean' ? body.community_alerts : current.community_alerts ?? true,
+        task_updates: typeof body?.task_updates === 'boolean' ? body.task_updates : current.task_updates ?? true,
+        compute_jobs: typeof body?.compute_jobs === 'boolean' ? body.compute_jobs : current.compute_jobs ?? true,
+        updated_at: nowIso()
+      };
+
+      writeJsonFile(prefsPath, prefs);
+      return json(res, 200, { ok: true, preferences: prefs.preferences[node_id] });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: 'internal error' });
+    }
+  }
+
   return json(res, 404, { ok: false, error: 'not found' });
 });
 
