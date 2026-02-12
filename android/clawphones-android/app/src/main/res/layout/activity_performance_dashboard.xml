@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/colorBackground"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <androidx.appcompat.widget.Toolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="?attr/colorPrimary"
+            android:elevation="4dp"
+            android:title="@string/performance_title"
+            tools:titleTextColor="@android:color/white" />
+
+        <!-- Health Indicators Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/performance_health_status"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <GridLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:columnCount="4"
+            android:rowCount="2">
+
+            <ImageView
+                android:id="@+id/indicator_relay"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_columnWeight="1"
+                android:background="@drawable/circle_indicator" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:gravity="center"
+                android:text="@string/performance_relay" />
+
+            <ImageView
+                android:id="@+id/indicator_backend"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_columnWeight="1"
+                android:background="@drawable/circle_indicator" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:gravity="center"
+                android:text="@string/performance_backend" />
+
+            <ImageView
+                android:id="@+id/indicator_ws"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_columnWeight="1"
+                android:background="@drawable/circle_indicator" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:gravity="center"
+                android:text="@string/performance_websocket" />
+
+            <ImageView
+                android:id="@+id/indicator_push"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_columnWeight="1"
+                android:background="@drawable/circle_indicator" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:gravity="center"
+                android:text="@string/performance_push" />
+        </GridLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/performance_latency_label" />
+        <TextView
+            android:id="@+id/text_latency"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/performance_latency_unavailable"
+            android:textSize="14sp" />
+
+        <!-- Performance Gauges Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/performance_system_metrics"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <!-- Memory -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/performance_memory" />
+            <ProgressBar
+                android:id="@+id/progress_memory"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="100"
+                android:progress="0" />
+            <TextView
+                android:id="@+id/text_memory_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0 MB" />
+        </LinearLayout>
+
+        <!-- CPU -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/performance_cpu" />
+            <ProgressBar
+                android:id="@+id/progress_cpu"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="100"
+                android:progress="0" />
+            <TextView
+                android:id="@+id/text_cpu_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0%" />
+        </LinearLayout>
+
+        <!-- Battery -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/performance_battery_drain" />
+            <ProgressBar
+                android:id="@+id/progress_battery"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:max="100"
+                android:progress="0" />
+            <TextView
+                android:id="@+id/text_battery_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0%/h" />
+        </LinearLayout>
+
+        <!-- Frame Rate -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/performance_frame_rate" />
+            <TextView
+                android:id="@+id/text_frame_rate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/performance_frame_rate_default" />
+        </LinearLayout>
+
+        <!-- Network Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/performance_network"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/performance_bytes_in" />
+            <TextView
+                android:id="@+id/text_bytes_in"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0 B" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/performance_bytes_out" />
+            <TextView
+                android:id="@+id/text_bytes_out"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0 B" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/performance_connections" />
+            <TextView
+                android:id="@+id/text_connections"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0" />
+        </LinearLayout>
+
+        <!-- Sync Status Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/performance_sync_status"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/performance_pending_uploads" />
+            <TextView
+                android:id="@+id/text_pending_uploads"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/performance_pending_downloads" />
+            <TextView
+                android:id="@+id/text_pending_downloads"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/performance_conflicts" />
+            <TextView
+                android:id="@+id/text_conflicts"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/performance_last_sync" />
+            <TextView
+                android:id="@+id/text_last_sync"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/performance_sync_never" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/button_force_sync"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/performance_force_sync" />
+
+        <!-- Cache Section -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/performance_cache"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/performance_cache_hit_rate" />
+            <TextView
+                android:id="@+id/text_cache_hit_rate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0%" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/performance_cache_size" />
+            <TextView
+                android:id="@+id/text_cache_size"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0 B" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/button_clear_cache"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/performance_clear_cache" />
+
+    </LinearLayout>
+</ScrollView>

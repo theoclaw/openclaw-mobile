@@ -199,6 +199,12 @@
             android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar" />
 
         <activity
+            android:name="ai.clawphones.agent.chat.PerformanceDashboardActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar" />
+
+        <activity
             android:name="ai.clawphones.agent.chat.CommunityListActivity"
             android:exported="false"
             android:screenOrientation="portrait"
@@ -211,9 +217,42 @@
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
         <activity
+            android:name="ai.clawphones.agent.chat.WalletActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
+        <activity
+            android:name="ai.clawphones.agent.chat.RewardsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
+        <activity
+            android:name="ai.clawphones.agent.chat.LeaderboardActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
+        <activity
             android:name="ai.clawphones.agent.DashboardActivity"
             android:exported="false"
             android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar" />
+
+        <activity
+            android:name="ai.clawphones.agent.chat.DeveloperPortalActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
+        <activity
+            android:name="ai.clawphones.agent.chat.UsageDashboardActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
+
+        <activity
+            android:name="ai.clawphones.agent.chat.PluginMarketActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
 
         <service
             android:name="ai.clawphones.agent.ClawPhonesService"

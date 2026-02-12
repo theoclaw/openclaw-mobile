@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Privacy Center Activity Layout -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF"
+    android:padding="0dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- Title -->
+        <TextView
+            android:id="@+id/privacyCenterTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/privacy_center_title"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:paddingBottom="24dp" />
+
+        <!-- Section: Data Collection -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#CCCCCC"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/dataCollectionTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/data_collection_title"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingBottom="16dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="16dp">
+
+            <!-- Face Blur Toggle -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="8dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/faceBlurTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/face_blur_title"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/faceBlurDescription"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/face_blur_description"
+                        android:textSize="12sp"
+                        android:textColor="#888888" />
+                </LinearLayout>
+
+                <SwitchCompat
+                    android:id="@+id/faceBlurSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    app:showText="false" />
+            </LinearLayout>
+
+            <!-- Plate Blur Toggle -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:padding="8dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/plateBlurTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/plate_blur_title"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/plateBlurDescription"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/plate_blur_description"
+                        android:textSize="12sp"
+                        android:textColor="#888888" />
+                </LinearLayout>
+
+                <SwitchCompat
+                    android:id="@+id/plateBlurSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    app:showText="false" />
+            </LinearLayout>
+
+            <!-- Location Precision Spinner -->
+            <TextView
+                android:id="@+id/locationPrecisionLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/location_precision_title"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:paddingTop="8dp"
+                android:paddingBottom="4dp" />
+
+            <Spinner
+                android:id="@+id/locationPrecisionSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="8dp" />
+        </LinearLayout>
+
+        <!-- Section: Data Retention -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#CCCCCC"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/dataRetentionTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/data_retention_title"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingBottom="16dp" />
+
+        <TextView
+            android:id="@+id/retentionDescription"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/retention_description"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/retentionDaysText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/retention_days"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:paddingTop="16dp"
+            android:paddingBottom="8dp" />
+
+        <SeekBar
+            android:id="@+id/retentionSeekBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="365"
+            android:progress="30" />
+
+        <!-- Section: Data Export -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#CCCCCC"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/dataExportTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/data_export_title"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingBottom="16dp" />
+
+        <TextView
+            android:id="@+id/exportDescription"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/export_description"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/requestExportButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/request_export_button" />
+
+        <ProgressBar
+            android:id="@+id/exportProgressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/exportStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <!-- Section: Delete Account -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#CCCCCC"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/deleteAccountTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/delete_account_title"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingBottom="16dp" />
+
+        <TextView
+            android:id="@+id/deleteWarning"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/delete_warning"
+            android:textSize="14sp"
+            android:textColor="#D32F2F" />
+
+        <Button
+            android:id="@+id/deleteAccountButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:backgroundTint="#D32F2F"
+            android:textColor="#FFFFFF"
+            android:text="@string/delete_account_button" />
+
+        <!-- Section: Audit Log -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#CCCCCC"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/auditLogTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/audit_log_title"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingBottom="16dp" />
+
+        <Button
+            android:id="@+id/auditLogFilterButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/filter_audit_log" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/auditLogRecyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="400dp"
+            android:layout_marginTop="16dp" />
+
+    </LinearLayout>
+
+</ScrollView>

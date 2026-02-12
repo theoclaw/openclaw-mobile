@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/clawphones_background">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <androidx.appcompat.widget.Toolbar
+            android:id="@+id/leaderboard_toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="@color/clawphones_background"
+            android:navigationIcon="@android:drawable/ic_media_previous"
+            app:title="@string/leaderboard_title"
+            app:titleTextColor="@color/clawphones_on_background" />
+
+        <!-- Period Spinner -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="8dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/leaderboard_period_label"
+                android:textColor="@color/clawphones_secondary_text"
+                android:textSize="14sp" />
+
+            <Spinner
+                android:id="@+id/spinner_period"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <!-- Progress Bar -->
+        <ProgressBar
+            android:id="@+id/progress_bar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="32dp"
+            android:indeterminateTint="@color/clawphones_accent" />
+
+        <!-- Empty State -->
+        <TextView
+            android:id="@+id/tv_empty_state"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="@string/leaderboard_empty_state"
+            android:textColor="@color/clawphones_secondary_text"
+            android:textSize="16sp"
+            android:visibility="gone" />
+
+        <!-- Main Content -->
+        <ScrollView
+            android:id="@+id/scroll_content"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- Podium Section -->
+                <LinearLayout
+                    android:id="@+id/podium_layout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:orientation="vertical">
+
+                    <!-- Podium Row -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="bottom"
+                        android:orientation="horizontal"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp">
+
+                        <!-- Second Place (Left) -->
+                        <com.google.android.material.card.MaterialCardView
+                            android:id="@+id/card_podium_second"
+                            android:layout_width="0dp"
+                            android:layout_height="120dp"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="4dp"
+                            app:cardCornerRadius="12dp"
+                            app:cardElevation="2dp">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:gravity="center"
+                                android:orientation="vertical"
+                                android:padding="12dp">
+
+                                <ImageView
+                                    android:id="@+id/iv_podium_second_avatar"
+                                    android:layout_width="48dp"
+                                    android:layout_height="48dp" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_second_name"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="8dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="Bob"
+                                    android:textColor="@color/clawphones_on_background"
+                                    android:textSize="14sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_second_score"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="12,850"
+                                    android:textColor="@color/clawphones_secondary_text"
+                                    android:textSize="12sp" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_second_rank"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="#2"
+                                    android:textColor="@color/clawphones_on_background"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+                        </com.google.android.material.card.MaterialCardView>
+
+                        <!-- First Place (Center, Highest) -->
+                        <com.google.android.material.card.MaterialCardView
+                            android:id="@+id/card_podium_first"
+                            android:layout_width="0dp"
+                            android:layout_height="160dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="4dp"
+                            android:layout_marginEnd="4dp"
+                            app:cardCornerRadius="12dp"
+                            app:cardElevation="4dp">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:gravity="center"
+                                android:orientation="vertical"
+                                android:padding="12dp">
+
+                                <ImageView
+                                    android:id="@+id/iv_podium_first_avatar"
+                                    android:layout_width="56dp"
+                                    android:layout_height="56dp" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_first_name"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="8dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="Alice"
+                                    android:textColor="@color/clawphones_on_background"
+                                    android:textSize="16sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_first_score"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="15,420"
+                                    android:textColor="@color/clawphones_secondary_text"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_first_rank"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="#1"
+                                    android:textColor="@color/clawphones_on_background"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+                        </com.google.android.material.card.MaterialCardView>
+
+                        <!-- Third Place (Right) -->
+                        <com.google.android.material.card.MaterialCardView
+                            android:id="@+id/card_podium_third"
+                            android:layout_width="0dp"
+                            android:layout_height="100dp"
+                            android:layout_weight="1"
+                            android:layout_marginStart="4dp"
+                            app:cardCornerRadius="12dp"
+                            app:cardElevation="2dp">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:gravity="center"
+                                android:orientation="vertical"
+                                android:padding="12dp">
+
+                                <ImageView
+                                    android:id="@+id/iv_podium_third_avatar"
+                                    android:layout_width="40dp"
+                                    android:layout_height="40dp" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_third_name"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="8dp"
+                                    android:ellipsize="end"
+                                    android:maxLines="1"
+                                    android:text="Charlie"
+                                    android:textColor="@color/clawphones_on_background"
+                                    android:textSize="14sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_third_score"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="11,300"
+                                    android:textColor="@color/clawphones_secondary_text"
+                                    android:textSize="12sp" />
+
+                                <TextView
+                                    android:id="@+id/tv_podium_third_rank"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="4dp"
+                                    android:text="#3"
+                                    android:textColor="@color/clawphones_on_background"
+                                    android:textSize="12sp" />
+                            </LinearLayout>
+                        </com.google.android.material.card.MaterialCardView>
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Ranked List -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/recycler_leaderboard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:clipToPadding="false"
+                    android:paddingBottom="120dp" />
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- My Rank Card (Pinned at Bottom) -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/card_my_rank"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_margin="16dp"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="6dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp">
+
+            <ImageView
+                android:id="@+id/iv_my_avatar"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@android:drawable/ic_menu_myplaces" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_my_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="You"
+                    android:textColor="@color/clawphones_on_background"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_my_score"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="6,850"
+                    android:textColor="@color/clawphones_secondary_text"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_my_rank"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_rank_badge"
+                android:paddingStart="16dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="4dp"
+                android:text="#7"
+                android:textColor="@color/clawphones_on_background"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+</FrameLayout>

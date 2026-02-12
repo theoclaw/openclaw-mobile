@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/card_leaderboard_entry"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="16dp"
+    android:layout_marginTop="2dp"
+    android:layout_marginEnd="16dp"
+    android:layout_marginBottom="2dp"
+    app:cardCornerRadius="6dp"
+    app:cardElevation="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="12dp">
+
+        <!-- Rank Badge -->
+        <ImageView
+            android:id="@+id/iv_rank_badge"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@android:drawable/ic_menu_info_details" />
+
+        <!-- Avatar -->
+        <ImageView
+            android:id="@+id/iv_avatar"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="12dp"
+            android:src="@android:drawable/ic_menu_myplaces" />
+
+        <!-- Name and Score -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tv_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Diana"
+                android:textColor="@color/clawphones_on_background"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_score"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="9,875"
+                android:textColor="@color/clawphones_secondary_text"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- Rank Number -->
+        <TextView
+            android:id="@+id/tv_rank"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="#4"
+            android:textColor="@color/clawphones_secondary_text"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

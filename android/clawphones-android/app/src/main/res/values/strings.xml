@@ -705,4 +705,170 @@
     <string name="earnings_empty">暂无收益记录 / No earnings yet</string>
     <string name="earnings_error">加载失败 / Load failed: %s</string>
 
+    <!-- Performance Dashboard -->
+    <string name="performance_title">性能监控 / Performance Monitor</string>
+    <string name="performance_health_status">健康状态 / Health Status</string>
+    <string name="performance_relay">中继 / Relay</string>
+    <string name="performance_backend">后端 / Backend</string>
+    <string name="performance_websocket">WebSocket</string>
+    <string name="performance_push">推送 / Push</string>
+    <string name="performance_latency_label">延迟 / Latency:</string>
+    <string name="performance_latency_value">延迟: %d ms / Latency: %d ms</string>
+    <string name="performance_latency_unavailable">不可用 / Unavailable</string>
+    <string name="performance_system_metrics">系统指标 / System Metrics</string>
+    <string name="performance_memory">内存使用 / Memory Usage</string>
+    <string name="performance_cpu">CPU 使用率 / CPU Usage</string>
+    <string name="performance_battery_drain">电池消耗 / Battery Drain</string>
+    <string name="performance_frame_rate">帧率 / Frame Rate</string>
+    <string name="performance_frame_rate_default">0 FPS</string>
+    <string name="performance_frame_rate_value">FPS: %s</string>
+    <string name="performance_network">网络 / Network</string>
+    <string name="performance_bytes_in">接收 / Bytes In:</string>
+    <string name="performance_bytes_out">发送 / Bytes Out:</string>
+    <string name="performance_connections">连接数 / Connections:</string>
+    <string name="performance_connections_value">%d 连接 / %d connections</string>
+    <string name="performance_sync_status">同步状态 / Sync Status</string>
+    <string name="performance_pending_uploads">待上传 / Pending Uploads:</string>
+    <string name="performance_pending_downloads">待下载 / Pending Downloads:</string>
+    <string name="performance_conflicts">冲突 / Conflicts:</string>
+    <string name="performance_last_sync">上次同步 / Last Sync:</string>
+    <string name="performance_sync_never">从未 / Never</string>
+    <string name="performance_force_sync">强制同步 / Force Sync</string>
+    <string name="performance_syncing">同步中 / Syncing...</string>
+    <string name="performance_sync_complete">同步完成 / Sync Complete</string>
+    <string name="performance_cache">缓存 / Cache</string>
+    <string name="performance_cache_hit_rate">命中率 / Hit Rate:</string>
+    <string name="performance_cache_size">大小 / Size:</string>
+    <string name="performance_clear_cache">清除缓存 / Clear Cache</string>
+    <string name="performance_clear_cache_title">清除缓存 / Clear Cache</string>
+    <string name="performance_clear_cache_message">确定要清除所有缓存吗？/ Are you sure you want to clear all cache?</string>
+    <string name="performance_clear">清除 / Clear</string>
+    <string name="performance_cancel">取消 / Cancel</string>
+    <string name="performance_cache_cleared">缓存已清除 / Cache cleared</string>
+
+    <!-- ClawPhones Wallet -->
+    <string name="wallet_title">钱包 / Wallet</string>
+    <string name="wallet_available_balance_label">可用余额 / Available</string>
+    <string name="wallet_pending_balance_label">待到账 / Pending</string>
+    <string name="wallet_balance_format">%,.2f Credits</string>
+    <string name="wallet_button_send">发送 / Send</string>
+    <string name="wallet_filter_label">筛选 / Filter:</string>
+    <string name="wallet_empty_transactions">暂无交易记录 / No transactions yet</string>
+
+    <!-- Wallet Dialog -->
+    <string name="dialog_send_credits_title">发送积分 / Send Credits</string>
+    <string name="dialog_send_amount_hint">金额 / Amount</string>
+    <string name="dialog_send_recipient_hint">接收人 / Recipient</string>
+    <string name="dialog_send_available_hint">可用余额: 1,250.50 Credits</string>
+    <string name="dialog_send_button">发送 / Send</string>
+    <string name="error_amount_required">请输入金额 / Please enter amount</string>
+    <string name="error_recipient_required">请输入接收人 / Please enter recipient</string>
+    <string name="error_invalid_amount">金额无效 / Invalid amount</string>
+    <string name="error_insufficient_balance">余额不足 / Insufficient balance</string>
+    <string name="toast_credits_sent">发送成功 / Sent successfully</string>
+    <string name="toast_send_failed">发送失败 / Send failed</string>
+
+    <!-- Wallet Filter Options -->
+    <string-array name="wallet_filter_options">
+        <item>全部 / All</item>
+        <item>已获得 / Earned</item>
+        <item>已消费 / Spent</item>
+        <item>转账 / Transfers</item>
+    </string-array>
+
+    <!-- ClawPhones Rewards -->
+    <string name="rewards_title">奖励 / Rewards</string>
+    <string name="rewards_daily_streak_title">连续签到 / Daily Streak</string>
+    <string name="rewards_total_rewards_label">累计奖励 / Total Rewards</string>
+    <string name="rewards_total_format">%d Credits</string>
+    <string name="rewards_daily_limit_label">今日领取 / Today</string>
+    <string name="rewards_today_claimed">%d / %d</string>
+    <string name="rewards_available_label">可领取奖励 / Available Rewards</string>
+    <string name="rewards_claim">领取 / Claim</string>
+    <string name="rewards_claimed">已领取 / Claimed</string>
+    <string name="rewards_countdown">过期时间: %s / Expires in: %s</string>
+    <string name="rewards_expired">已过期 / Expired</string>
+    <string name="rewards_empty_state">暂无可用奖励 / No rewards available</string>
+    <string name="rewards_daily_limit_reached">今日领取已达上限 / Daily limit reached</string>
+    <string name="rewards_claim_success">领取成功 / Claimed successfully</string>
+    <string name="rewards_claim_failed">领取失败 / Claim failed</string>
+
+    <!-- ClawPhones Leaderboard -->
+    <string name="leaderboard_title">排行榜 / Leaderboard</string>
+    <string name="leaderboard_period_label">周期 / Period:</string>
+    <string name="leaderboard_empty_state">暂无排行榜数据 / No leaderboard data</string>
+    <string name="leaderboard_rank_format">#%d</string>
+    <string name="leaderboard_score_format">%,d</string>
+
+    <!-- Leaderboard Period Options -->
+    <string-array name="leaderboard_period_options">
+        <item>本周 / Weekly</item>
+        <item>本月 / Monthly</item>
+        <item>全部 / All Time</item>
+    </string-array>
+
+    <!-- Developer Portal -->
+    <string name="developer_portal_title">开发者门户 / Developer Portal</string>
+    <string name="tab_api_keys">API Keys</string>
+    <string name="tab_webhooks">Webhooks</string>
+    <string name="tab_plugins">Plugins</string>
+    <string name="fab_generate_key">生成 API Key / Generate Key</string>
+    <string name="fab_add_webhook">添加 Webhook / Add Webhook</string>
+
+    <!-- API Keys -->
+    <string name="dialog_generate_key_title">生成 API Key / Generate API Key</string>
+    <string name="dialog_key_name_hint">名称 / Name</string>
+    <string name="default_key_name">默认 / Default</string>
+    <string name="dialog_key_permissions">权限: 读写 / Permissions: Read/Write</string>
+    <string name="button_generate">生成 / Generate</string>
+    <string name="button_cancel">取消 / Cancel</string>
+    <string name="key_generated">API Key 已生成 / API Key generated</string>
+    <string name="btn_copy">复制 / Copy</string>
+    <string name="key_copied">已复制到剪贴板 / Copied to clipboard</string>
+    <string name="btn_revoke">撤销 / Revoke</string>
+    <string name="dialog_revoke_key_title">撤销 API Key / Revoke API Key</string>
+    <string name="dialog_revoke_key_message">确定要撤销此 API Key 吗？撤销后此 key 将无法使用。/ Are you sure you want to revoke this API Key? It will no longer work after revocation.</string>
+    <string name="button_revoke">撤销 / Revoke</string>
+    <string name="key_revoked">API Key 已撤销 / API Key revoked</string>
+
+    <!-- Webhooks -->
+    <string name="dialog_add_webhook_title">添加 Webhook / Add Webhook</string>
+    <string name="dialog_webhook_url_hint">URL / Webhook URL</string>
+    <string name="dialog_webhook_event_hint">事件 / Event</string>
+    <string name="button_add">添加 / Add</string>
+    <string name="webhook_added">Webhook 已添加 / Webhook added</string>
+    <string name="btn_test">测试 / Test</string>
+    <string name="webhook_test_sent">测试请求已发送 / Test request sent</string>
+    <string name="btn_delete">删除 / Delete</string>
+    <string name="webhook_deleted">Webhook 已删除 / Webhook deleted</string>
+
+    <!-- Plugins -->
+    <string name="plugins_coming_soon">插件功能即将推出 / Plugins coming soon</string>
+
+    <!-- Usage Dashboard -->
+    <string name="usage_dashboard_title">使用仪表盘 / Usage Dashboard</string>
+    <string name="usage_chart_title">API 请求统计 / API Request Stats</string>
+    <string name="rate_limit_label">速率限制 / Rate Limit</string>
+    <string name="rate_limit_format">%d / %d</string>
+    <string name="latency_label">平均延迟 / Average Latency</string>
+    <string name="latency_value">%dms</string>
+    <string name="top_endpoints_label">热门接口 / Top Endpoints</string>
+
+    <!-- Date Range Options -->
+    <string-array name="date_range_options">
+        <item>今天 / Today</item>
+        <item>本周 / This Week</item>
+        <item>本月 / This Month</item>
+        <item>最近30天 / Last 30 Days</item>
+    </string-array>
+
+    <!-- Plugin Market -->
+    <string name="plugin_market_title">插件市场 / Plugin Market</string>
+    <string name="search_hint">搜索插件 / Search plugins</string>
+    <string name="plugin_icon_desc">插件图标 / Plugin icon</string>
+    <string name="button_install">安装 / Install</string>
+    <string name="button_uninstall">卸载 / Uninstall</string>
+    <string name="plugin_installed">%s 已安装 / %s installed</string>
+    <string name="plugin_uninstalled">%s 已卸载 / %s uninstalled</string>
+
 </resources>

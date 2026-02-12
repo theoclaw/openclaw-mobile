@@ -1179,6 +1179,243 @@ async def _init_db() -> None:
             """
         )
 
+        # Privacy Center tables
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS privacy_settings (
+              user_id TEXT PRIMARY KEY REFERENCES users(id),
+              face_blur INTEGER NOT NULL DEFAULT 1,
+              plate_blur INTEGER NOT NULL DEFAULT 1,
+              location_precision TEXT NOT NULL DEFAULT 'neighborhood' CHECK (location_precision IN ('exact','neighborhood','city','none')),
+              data_retention_days INTEGER NOT NULL DEFAULT 90,
+              share_analytics INTEGER NOT NULL DEFAULT 0,
+              share_community INTEGER NOT NULL DEFAULT 1,
+              encryption_enabled INTEGER NOT NULL DEFAULT 1,
+              auto_delete_days INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS data_exports (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','completed','failed','expired')),
+              requested_at INTEGER NOT NULL,
+              completed_at INTEGER,
+              download_url TEXT,
+              expires_at INTEGER,
+              format TEXT NOT NULL DEFAULT 'json' CHECK (format IN ('json','csv'))
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_data_exports_user_requested ON data_exports(user_id, requested_at DESC)")
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS privacy_audit_log (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              action TEXT NOT NULL,
+              data_type TEXT,
+              timestamp INTEGER NOT NULL,
+              details TEXT
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_privacy_audit_log_user_timestamp ON privacy_audit_log(user_id, timestamp DESC)")
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS consent_records (
+              user_id TEXT NOT NULL REFERENCES users(id),
+              feature_name TEXT NOT NULL,
+              granted INTEGER NOT NULL DEFAULT 0,
+              granted_at INTEGER,
+              revoked_at INTEGER,
+              PRIMARY KEY (user_id, feature_name)
+            )
+            """
+        )
+
+        # Performance tables
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_metrics (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              startup_time_ms INTEGER,
+              memory_mb REAL,
+              cpu_percent REAL,
+              battery_drain REAL,
+              network_in INTEGER,
+              network_out INTEGER,
+              connections INTEGER,
+              frame_drops INTEGER,
+              cache_hit_rate REAL,
+              recorded_at INTEGER NOT NULL
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_app_metrics_user_recorded ON app_metrics(user_id, recorded_at DESC)")
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS health_checks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              relay_ok INTEGER NOT NULL DEFAULT 0,
+              backend_ok INTEGER NOT NULL DEFAULT 0,
+              ws_ok INTEGER NOT NULL DEFAULT 0,
+              push_ok INTEGER NOT NULL DEFAULT 0,
+              latency_ms INTEGER,
+              checked_at INTEGER NOT NULL
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_health_checks_user_checked ON health_checks(user_id, checked_at DESC)")
+
+        # Developer Platform tables
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_keys (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              name TEXT NOT NULL,
+              key_hash TEXT NOT NULL,
+              permissions TEXT DEFAULT '{}',
+              rate_limit INTEGER DEFAULT 100,
+              created_at INTEGER NOT NULL,
+              expires_at INTEGER,
+              is_active INTEGER DEFAULT 1,
+              last_used_at INTEGER
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id)")
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS webhooks (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              url TEXT NOT NULL,
+              events TEXT DEFAULT '[]',
+              secret TEXT,
+              is_active INTEGER DEFAULT 1,
+              created_at INTEGER NOT NULL,
+              failure_count INTEGER DEFAULT 0
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_webhooks_user_id ON webhooks(user_id)")
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS usage_records (
+              id TEXT PRIMARY KEY,
+              api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+              endpoint TEXT NOT NULL,
+              timestamp INTEGER NOT NULL,
+              latency_ms INTEGER
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_usage_records_api_key_timestamp ON usage_records(api_key_id, timestamp DESC)")
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS plugins (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              version TEXT NOT NULL,
+              description TEXT,
+              author TEXT,
+              download_url TEXT,
+              is_active INTEGER DEFAULT 1
+            )
+            """
+        )
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_plugins (
+              user_id TEXT NOT NULL REFERENCES users(id),
+              plugin_id TEXT NOT NULL REFERENCES plugins(id),
+              installed_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, plugin_id)
+            )
+            """
+        )
+
+        # Token Economy tables
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS wallet (
+              user_id TEXT PRIMARY KEY REFERENCES users(id),
+              total_credits INTEGER DEFAULT 0,
+              available_credits INTEGER DEFAULT 0,
+              pending_credits INTEGER DEFAULT 0,
+              lifetime_earned INTEGER DEFAULT 0,
+              lifetime_spent INTEGER DEFAULT 0
+            )
+            """
+        )
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transactions (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              type TEXT NOT NULL,
+              amount INTEGER NOT NULL,
+              description TEXT,
+              counterparty_id TEXT,
+              task_id TEXT,
+              created_at INTEGER NOT NULL,
+              status TEXT DEFAULT 'completed'
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_created ON transactions(user_id, created_at DESC)")
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reward_rules (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              description TEXT,
+              trigger_type TEXT NOT NULL,
+              reward_credits INTEGER NOT NULL,
+              cooldown_minutes INTEGER,
+              max_per_day INTEGER,
+              is_active INTEGER DEFAULT 1
+            )
+            """
+        )
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reward_claims (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id),
+              rule_id TEXT NOT NULL REFERENCES reward_rules(id),
+              claimed_at INTEGER NOT NULL
+            )
+            """
+        )
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_reward_claims_user_rule ON reward_claims(user_id, rule_id, claimed_at DESC)")
+
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS leaderboard_cache (
+              user_id TEXT NOT NULL REFERENCES users(id),
+              period TEXT NOT NULL,
+              credits INTEGER NOT NULL DEFAULT 0,
+              rank INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, period)
+            )
+            """
+        )
+
         # Normalize legacy tier aliases/casing to canonical free/pro/max in-place.
         for legacy, canonical in (
             ("free", "free"),
@@ -5099,6 +5336,1366 @@ async def get_push_history(request: Request) -> Any:
         notifications.append(notif)
 
     return {"notifications": notifications, "count": len(notifications)}
+
+
+# -----------------------------
+# Privacy Center Endpoints
+# -----------------------------
+
+
+async def _ensure_privacy_settings(db: Any, user_id: str) -> Dict[str, Any]:
+    """Get or create default privacy settings for a user."""
+    async with db.execute(
+        "SELECT * FROM privacy_settings WHERE user_id=?",
+        (user_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        # Auto-create defaults
+        now = int(time.time())
+        await db.execute(
+            """
+            INSERT INTO privacy_settings
+            (user_id, face_blur, plate_blur, location_precision, data_retention_days,
+             share_analytics, share_community, encryption_enabled, auto_delete_days)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, 1, 1, "neighborhood", 90, 0, 1, 1, 0),
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT * FROM privacy_settings WHERE user_id=?",
+            (user_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row)
+
+
+@app.get("/v1/privacy/settings")
+async def get_privacy_settings(request: Request) -> Any:
+    """Get user's privacy settings (auto-creates defaults if not set)."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        settings = await _ensure_privacy_settings(db, user_id)
+
+    return {"settings": settings}
+
+
+@app.put("/v1/privacy/settings")
+async def update_privacy_settings(request: Request) -> Any:
+    """Update user's privacy settings."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # Ensure settings exist
+        await _ensure_privacy_settings(db, user_id)
+
+        # Build update query with only provided fields
+        updates = []
+        values = []
+        valid_fields = {
+            "face_blur": ("INTEGER", lambda x: 1 if x else 0),
+            "plate_blur": ("INTEGER", lambda x: 1 if x else 0),
+            "location_precision": ("TEXT", lambda x: str(x) if x in ("exact", "neighborhood", "city", "none") else "neighborhood"),
+            "data_retention_days": ("INTEGER", int),
+            "share_analytics": ("INTEGER", lambda x: 1 if x else 0),
+            "share_community": ("INTEGER", lambda x: 1 if x else 0),
+            "encryption_enabled": ("INTEGER", lambda x: 1 if x else 0),
+            "auto_delete_days": ("INTEGER", int),
+        }
+
+        for field, (field_type, converter) in valid_fields.items():
+            if field in body:
+                try:
+                    updates.append(f"{field}=?")
+                    values.append(converter(body[field]))
+                except Exception:
+                    continue
+
+        if updates:
+            values.append(user_id)
+            query = f"UPDATE privacy_settings SET {', '.join(updates)} WHERE user_id=?"
+            await db.execute(query, values)
+            await db.commit()
+
+        # Log the update
+        await db.execute(
+            """
+            INSERT INTO privacy_audit_log (user_id, action, data_type, timestamp, details)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, "update_settings", "privacy_settings", int(time.time()), json.dumps(body)),
+        )
+        await db.commit()
+
+        # Return updated settings
+        async with db.execute(
+            "SELECT * FROM privacy_settings WHERE user_id=?",
+            (user_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return {"settings": dict(row)}
+
+
+@app.post("/v1/privacy/export")
+async def request_data_export(request: Request) -> Any:
+    """Request a data export for the user."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    export_format = body.get("format", "json")
+    if export_format not in ("json", "csv"):
+        export_format = "json"
+
+    export_id = secrets.token_hex(16)
+    now = int(time.time())
+    expires_at = now + EXPORT_URL_TTL_SECONDS
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO data_exports
+            (id, user_id, status, requested_at, completed_at, download_url, expires_at, format)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (export_id, user_id, "pending", now, None, None, expires_at, export_format),
+        )
+        await db.commit()
+
+        # Log the request
+        await db.execute(
+            """
+            INSERT INTO privacy_audit_log (user_id, action, data_type, timestamp, details)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, "export_requested", "data_export", now, json.dumps({"export_id": export_id, "format": export_format})),
+        )
+        await db.commit()
+
+    return {"export_id": export_id, "status": "pending", "expires_at": expires_at}
+
+
+@app.get("/v1/privacy/export/{export_id}")
+async def get_data_export(export_id: str, request: Request) -> Any:
+    """Get status or download a data export."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM data_exports WHERE id=? AND user_id=?",
+            (export_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="export not found")
+            return dict(row)
+
+
+@app.delete("/v1/privacy/data")
+async def delete_user_data(request: Request) -> Any:
+    """Delete all user data (requires confirmation token)."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+
+    confirmation_token = body.get("confirmation_token")
+    if not confirmation_token or not isinstance(confirmation_token, str):
+        raise HTTPException(status_code=400, detail="confirmation_token is required")
+
+    # Simple token verification - requires user to send their own user_id as confirmation
+    if confirmation_token != user_id:
+        raise HTTPException(status_code=403, detail="invalid confirmation token")
+
+    now = int(time.time())
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        # Delete user data from all tables
+        await db.execute("DELETE FROM privacy_settings WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM data_exports WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM privacy_audit_log WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM consent_records WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM app_metrics WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM health_checks WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM user_exports WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM push_tokens WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM device_tokens WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM notification_preferences WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM community_members WHERE node_id=?", (user_id,))
+
+        # Log the deletion before deleting user
+        await db.execute(
+            """
+            INSERT INTO privacy_audit_log (user_id, action, data_type, timestamp, details)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, "delete_all_data", "user_data", now, json.dumps({"deleted_at": now})),
+        )
+        await db.commit()
+
+        # Delete user last
+        await db.execute("DELETE FROM users WHERE id=?", (user_id,))
+        await db.commit()
+
+    return {"status": "deleted", "deleted_at": now}
+
+
+@app.get("/v1/privacy/audit")
+async def get_privacy_audit_log(request: Request) -> Any:
+    """Get user's privacy audit log."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    limit = min(int(request.query_params.get("limit", 50)), 500)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT * FROM privacy_audit_log
+            WHERE user_id=?
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    logs = []
+    for r in rows:
+        log = dict(r)
+        if log.get("details"):
+            try:
+                log["details"] = json.loads(log["details"])
+            except Exception:
+                pass
+        logs.append(log)
+
+    return {"logs": logs, "count": len(logs)}
+
+
+@app.put("/v1/privacy/consent")
+async def update_consent(request: Request) -> Any:
+    """Update user consent records."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+
+    consents = body.get("consents")
+    if not isinstance(consents, dict):
+        raise HTTPException(status_code=400, detail="consents must be an object")
+
+    now = int(time.time())
+    updated = []
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        for feature_name, granted in consents.items():
+            if not isinstance(feature_name, str) or not feature_name:
+                continue
+            granted_value = 1 if granted else 0
+
+            # Check if consent exists
+            async with db.execute(
+                "SELECT * FROM consent_records WHERE user_id=? AND feature_name=?",
+                (user_id, feature_name),
+            ) as cur:
+                row = await cur.fetchone()
+
+            if row:
+                current_granted = int(row.get("granted", 0))
+                if current_granted != granted_value:
+                    # Update consent
+                    await db.execute(
+                        """
+                        UPDATE consent_records
+                        SET granted=?, granted_at=?, revoked_at=?
+                        WHERE user_id=? AND feature_name=?
+                        """,
+                        (granted_value, now if granted_value else None, now if not granted_value else None, user_id, feature_name),
+                    )
+                    updated.append({"feature": feature_name, "granted": bool(granted_value)})
+            else:
+                # Insert new consent
+                await db.execute(
+                    """
+                    INSERT INTO consent_records (user_id, feature_name, granted, granted_at, revoked_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (user_id, feature_name, granted_value, now if granted_value else None, now if not granted_value else None),
+                )
+                updated.append({"feature": feature_name, "granted": bool(granted_value)})
+
+        await db.commit()
+
+        # Log consent updates
+        if updated:
+            await db.execute(
+                """
+                INSERT INTO privacy_audit_log (user_id, action, data_type, timestamp, details)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, "update_consent", "consent_records", now, json.dumps({"updated": updated})),
+            )
+            await db.commit()
+
+        # Return all consent records
+        async with db.execute(
+            "SELECT * FROM consent_records WHERE user_id=?",
+            (user_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    consents_result = []
+    for r in rows:
+        consents_result.append({
+            "feature_name": r.get("feature_name"),
+            "granted": bool(r.get("granted")),
+            "granted_at": r.get("granted_at"),
+            "revoked_at": r.get("revoked_at"),
+        })
+
+    return {"consents": consents_result, "updated": updated}
+
+
+# -----------------------------
+# Performance Endpoints
+# -----------------------------
+
+
+@app.post("/v1/metrics/report")
+async def report_metrics(request: Request) -> Any:
+    """Report app performance metrics."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+
+    now = int(time.time())
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO app_metrics
+            (user_id, startup_time_ms, memory_mb, cpu_percent, battery_drain,
+             network_in, network_out, connections, frame_drops, cache_hit_rate, recorded_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                int(body.get("startup_time_ms") or 0),
+                float(body.get("memory_mb") or 0),
+                float(body.get("cpu_percent") or 0),
+                float(body.get("battery_drain") or 0),
+                int(body.get("network_in") or 0),
+                int(body.get("network_out") or 0),
+                int(body.get("connections") or 0),
+                int(body.get("frame_drops") or 0),
+                float(body.get("cache_hit_rate") or 0),
+                now,
+            ),
+        )
+        await db.commit()
+
+    return {"status": "recorded", "recorded_at": now}
+
+
+@app.get("/v1/metrics/history")
+async def get_metrics_history(request: Request) -> Any:
+    """Get app metrics history for the user."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    limit = min(int(request.query_params.get("limit", 100)), 500)
+    since = int(request.query_params.get("since") or 0)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT * FROM app_metrics
+            WHERE user_id=?
+        """
+        params = [user_id]
+        if since > 0:
+            query += " AND recorded_at >= ?"
+            params.append(since)
+        query += " ORDER BY recorded_at DESC LIMIT ?"
+        params.append(limit)
+
+        async with db.execute(query, params) as cur:
+            rows = await cur.fetchall()
+
+    return {"metrics": [dict(r) for r in rows], "count": len(rows)}
+
+
+@app.post("/v1/health/check")
+async def perform_health_check(request: Request) -> Any:
+    """Perform and record a health check."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="request body must be valid JSON")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be an object")
+
+    now = int(time.time())
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO health_checks
+            (user_id, relay_ok, backend_ok, ws_ok, push_ok, latency_ms, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                1 if body.get("relay_ok") else 0,
+                1 if body.get("backend_ok") else 0,
+                1 if body.get("ws_ok") else 0,
+                1 if body.get("push_ok") else 0,
+                int(body.get("latency_ms") or 0),
+                now,
+            ),
+        )
+        await db.commit()
+
+    return {"status": "checked", "checked_at": now}
+
+
+@app.get("/v1/health/status")
+async def get_health_status(request: Request) -> Any:
+    """Get health check history/status for the user."""
+    token = _parse_bearer(request.headers.get("Authorization"))
+    if not token:
+        raise HTTPException(status_code=401, detail="missing authorization token")
+    token_row = await _get_token_row(token)
+    if not token_row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = token_row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="token not associated with user account")
+
+    limit = min(int(request.query_params.get("limit", 20)), 100)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT * FROM health_checks
+            WHERE user_id=?
+            ORDER BY checked_at DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        # Calculate overall health stats
+        if rows:
+            total = len(rows)
+            relay_ok = sum(1 for r in rows if r.get("relay_ok"))
+            backend_ok = sum(1 for r in rows if r.get("backend_ok"))
+            ws_ok = sum(1 for r in rows if r.get("ws_ok"))
+            push_ok = sum(1 for r in rows if r.get("push_ok"))
+            avg_latency = sum(r.get("latency_ms") or 0 for r in rows) // total
+
+            status = {
+                "relay_health": f"{relay_ok}/{total}",
+                "backend_health": f"{backend_ok}/{total}",
+                "ws_health": f"{ws_ok}/{total}",
+                "push_health": f"{push_ok}/{total}",
+                "avg_latency_ms": avg_latency,
+                "overall_healthy": (relay_ok > 0 and backend_ok > 0 and ws_ok > 0 and push_ok > 0),
+            }
+        else:
+            status = {
+                "relay_health": "0/0",
+                "backend_health": "0/0",
+                "ws_health": "0/0",
+                "push_health": "0/0",
+                "avg_latency_ms": 0,
+                "overall_healthy": None,
+            }
+
+    return {"status": status, "checks": [dict(r) for r in rows]}
+
+
+# =============================================================================
+# Developer Platform API Endpoints
+# =============================================================================
+
+
+async def _require_user_for_developer(request: Request) -> Tuple[str, str]:
+    """Get user_id and token from request for developer endpoints."""
+    token = _require_device_token(request)
+    row = await _get_token_row(token)
+    if not row:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user_id = row.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="user not found")
+    return str(user_id), token
+
+
+@app.post("/v1/developer/keys")
+async def create_api_key(request: Request) -> Any:
+    """Create a new API key for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+    body = await request.json()
+    name = body.get("name", "API Key")
+    permissions = json.dumps(body.get("permissions", {}))
+    rate_limit = body.get("rate_limit", 100)
+    expires_at = body.get("expires_at")
+
+    api_key_id = str(uuid.uuid4())
+    api_key = f"oc_sk_{secrets.token_urlsafe(32)}"
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    now = int(time.time())
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO api_keys (id, user_id, name, key_hash, permissions, rate_limit, created_at, expires_at, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+            """,
+            (api_key_id, user_id, name, key_hash, permissions, rate_limit, now, expires_at),
+        )
+        await db.commit()
+
+    return {
+        "id": api_key_id,
+        "name": name,
+        "key": api_key,
+        "permissions": json.loads(permissions),
+        "rate_limit": rate_limit,
+        "created_at": now,
+        "expires_at": expires_at,
+        "is_active": True,
+    }
+
+
+@app.get("/v1/developer/keys")
+async def list_api_keys(request: Request) -> Any:
+    """List all API keys for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT id, name, permissions, rate_limit, created_at, expires_at, is_active, last_used_at
+            FROM api_keys
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    keys = []
+    for r in rows:
+        keys.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "permissions": json.loads(r.get("permissions", "{}")),
+                "rate_limit": r["rate_limit"],
+                "created_at": r["created_at"],
+                "expires_at": r["expires_at"],
+                "is_active": bool(r["is_active"]),
+                "last_used_at": r["last_used_at"],
+            }
+        )
+
+    return {"keys": keys}
+
+
+@app.delete("/v1/developer/keys/{key_id}")
+async def delete_api_key(request: Request, key_id: str) -> Any:
+    """Delete an API key."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        async with db.execute(
+            "SELECT id FROM api_keys WHERE id = ? AND user_id = ?",
+            (key_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="API key not found")
+
+        await db.execute("DELETE FROM api_keys WHERE id = ?", (key_id,))
+        await db.commit()
+
+    return {"status": "deleted", "id": key_id}
+
+
+@app.post("/v1/developer/webhooks")
+async def create_webhook(request: Request) -> Any:
+    """Create a new webhook for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+    body = await request.json()
+
+    url = body.get("url", "")
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    events = json.dumps(body.get("events", []))
+    secret = body.get("secret", secrets.token_urlsafe(32))
+
+    webhook_id = str(uuid.uuid4())
+    now = int(time.time())
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO webhooks (id, user_id, url, events, secret, is_active, created_at, failure_count)
+            VALUES (?, ?, ?, ?, ?, 1, ?, 0)
+            """,
+            (webhook_id, user_id, url, events, secret, now),
+        )
+        await db.commit()
+
+    return {
+        "id": webhook_id,
+        "url": url,
+        "events": json.loads(events),
+        "is_active": True,
+        "created_at": now,
+    }
+
+
+@app.get("/v1/developer/webhooks")
+async def list_webhooks(request: Request) -> Any:
+    """List all webhooks for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT id, url, events, is_active, created_at, failure_count
+            FROM webhooks
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (user_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    webhooks = []
+    for r in rows:
+        webhooks.append(
+            {
+                "id": r["id"],
+                "url": r["url"],
+                "events": json.loads(r.get("events", "[]")),
+                "is_active": bool(r["is_active"]),
+                "created_at": r["created_at"],
+                "failure_count": r["failure_count"],
+            }
+        )
+
+    return {"webhooks": webhooks}
+
+
+@app.delete("/v1/developer/webhooks/{webhook_id}")
+async def delete_webhook(request: Request, webhook_id: str) -> Any:
+    """Delete a webhook."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        async with db.execute(
+            "SELECT id FROM webhooks WHERE id = ? AND user_id = ?",
+            (webhook_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="webhook not found")
+
+        await db.execute("DELETE FROM webhooks WHERE id = ?", (webhook_id,))
+        await db.commit()
+
+    return {"status": "deleted", "id": webhook_id}
+
+
+@app.post("/v1/developer/webhooks/{webhook_id}/test")
+async def test_webhook(request: Request, webhook_id: str) -> Any:
+    """Test a webhook by sending a ping event."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT url, secret FROM webhooks WHERE id = ? AND user_id = ?",
+            (webhook_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="webhook not found")
+
+        webhook_url = row["url"]
+        secret = row.get("secret")
+
+    payload = {
+        "event": "test",
+        "timestamp": int(time.time()),
+        "webhook_id": webhook_id,
+    }
+
+    try:
+        headers = {"Content-Type": "application/json"}
+        if secret:
+            headers["X-Webhook-Signature"] = hashlib.sha256(
+                f"{secret}{json.dumps(payload)}".encode()
+            ).hexdigest()
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(webhook_url, json=payload, headers=headers, timeout=10)
+            if response.status_code >= 400:
+                raise HTTPException(
+                    status_code=400, detail=f"webhook returned error: {response.status_code}"
+                )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"webhook test failed: {str(e)}")
+
+    return {"status": "success", "message": "webhook test successful"}
+
+
+@app.get("/v1/developer/usage")
+async def get_usage(request: Request) -> Any:
+    """Get API usage statistics for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    limit = min(int(request.query_params.get("limit", 100)), 1000)
+    offset = int(request.query_params.get("offset", 0))
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Get total usage summary
+        async with db.execute(
+            """
+            SELECT COUNT(*) as total, AVG(latency_ms) as avg_latency
+            FROM usage_records ur
+            JOIN api_keys ak ON ak.id = ur.api_key_id
+            WHERE ak.user_id = ?
+            """,
+            (user_id,),
+        ) as cur:
+            summary = await cur.fetchone()
+
+        # Get recent records
+        async with db.execute(
+            """
+            SELECT ur.id, ur.endpoint, ur.timestamp, ur.latency_ms, ak.name as key_name
+            FROM usage_records ur
+            JOIN api_keys ak ON ak.id = ur.api_key_id
+            WHERE ak.user_id = ?
+            ORDER BY ur.timestamp DESC
+            LIMIT ? OFFSET ?
+            """,
+            (user_id, limit, offset),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    records = []
+    for r in rows:
+        records.append(
+            {
+                "id": r["id"],
+                "endpoint": r["endpoint"],
+                "timestamp": r["timestamp"],
+                "latency_ms": r["latency_ms"],
+                "key_name": r["key_name"],
+            }
+        )
+
+    return {
+        "summary": {
+            "total_requests": summary["total"] if summary else 0,
+            "average_latency_ms": int(summary["avg_latency"]) if summary and summary["avg_latency"] else None,
+        },
+        "records": records,
+    }
+
+
+@app.get("/v1/developer/plugins")
+async def list_plugins(request: Request) -> Any:
+    """List available plugins."""
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT id, name, version, description, author, download_url, is_active
+            FROM plugins
+            WHERE is_active = 1
+            ORDER BY name ASC
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+
+    plugins = []
+    for r in rows:
+        plugins.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "version": r["version"],
+                "description": r["description"],
+                "author": r["author"],
+                "download_url": r["download_url"],
+                "is_active": bool(r["is_active"]),
+            }
+        )
+
+    return {"plugins": plugins}
+
+
+@app.post("/v1/developer/plugins/{plugin_id}/install")
+async def install_plugin(request: Request, plugin_id: str) -> Any:
+    """Install a plugin for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+    now = int(time.time())
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        # Check if plugin exists
+        async with db.execute(
+            "SELECT id, name FROM plugins WHERE id = ? AND is_active = 1",
+            (plugin_id,),
+        ) as cur:
+            plugin = await cur.fetchone()
+        if not plugin:
+            raise HTTPException(status_code=404, detail="plugin not found")
+
+        # Check if already installed
+        async with db.execute(
+            "SELECT user_id FROM user_plugins WHERE user_id = ? AND plugin_id = ?",
+            (user_id, plugin_id),
+        ) as cur:
+            existing = await cur.fetchone()
+        if existing:
+            return {"status": "already_installed", "plugin_id": plugin_id, "name": plugin["name"]}
+
+        # Install plugin
+        await db.execute(
+            "INSERT INTO user_plugins (user_id, plugin_id, installed_at) VALUES (?, ?, ?)",
+            (user_id, plugin_id, now),
+        )
+        await db.commit()
+
+    return {"status": "installed", "plugin_id": plugin_id, "name": plugin["name"], "installed_at": now}
+
+
+@app.delete("/v1/developer/plugins/{plugin_id}/uninstall")
+async def uninstall_plugin(request: Request, plugin_id: str) -> Any:
+    """Uninstall a plugin for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        # Check if installed
+        async with db.execute(
+            "SELECT plugin_id FROM user_plugins WHERE user_id = ? AND plugin_id = ?",
+            (user_id, plugin_id),
+        ) as cur:
+            existing = await cur.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="plugin not installed")
+
+        # Uninstall plugin
+        await db.execute(
+            "DELETE FROM user_plugins WHERE user_id = ? AND plugin_id = ?",
+            (user_id, plugin_id),
+        )
+        await db.commit()
+
+    return {"status": "uninstalled", "plugin_id": plugin_id}
+
+
+# =============================================================================
+# Token Economy API Endpoints
+# =============================================================================
+
+
+@app.get("/v1/tokens/wallet")
+async def get_wallet(request: Request) -> Any:
+    """Get the wallet for the authenticated user (auto-create if missing)."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM wallet WHERE user_id = ?", (user_id,)) as cur:
+            row = await cur.fetchone()
+
+        if not row:
+            # Auto-create wallet
+            now = int(time.time())
+            await db.execute(
+                """
+                INSERT INTO wallet (user_id, total_credits, available_credits, pending_credits, lifetime_earned, lifetime_spent)
+                VALUES (?, 0, 0, 0, 0, 0)
+                """,
+                (user_id,),
+            )
+            await db.commit()
+
+            return {
+                "user_id": user_id,
+                "total_credits": 0,
+                "available_credits": 0,
+                "pending_credits": 0,
+                "lifetime_earned": 0,
+                "lifetime_spent": 0,
+            }
+
+        return {
+            "user_id": row["user_id"],
+            "total_credits": row["total_credits"],
+            "available_credits": row["available_credits"],
+            "pending_credits": row["pending_credits"],
+            "lifetime_earned": row["lifetime_earned"],
+            "lifetime_spent": row["lifetime_spent"],
+        }
+
+
+@app.get("/v1/tokens/transactions")
+async def get_transactions(request: Request) -> Any:
+    """Get transactions for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+
+    limit = min(int(request.query_params.get("limit", 50)), 200)
+    offset = int(request.query_params.get("offset", 0))
+    tx_type = request.query_params.get("type")
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        query = """
+            SELECT id, type, amount, description, counterparty_id, task_id, created_at, status
+            FROM transactions
+            WHERE user_id = ?
+        """
+        params = [user_id]
+
+        if tx_type:
+            query += " AND type = ?"
+            params.append(tx_type)
+
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        async with db.execute(query, params) as cur:
+            rows = await cur.fetchall()
+
+    transactions = []
+    for r in rows:
+        transactions.append(
+            {
+                "id": r["id"],
+                "type": r["type"],
+                "amount": r["amount"],
+                "description": r["description"],
+                "counterparty_id": r["counterparty_id"],
+                "task_id": r["task_id"],
+                "created_at": r["created_at"],
+                "status": r["status"],
+            }
+        )
+
+    return {"transactions": transactions}
+
+
+@app.post("/v1/tokens/transfer")
+async def transfer_tokens(request: Request) -> Any:
+    """Transfer tokens to another user."""
+    user_id, _ = await _require_user_for_developer(request)
+    body = await request.json()
+
+    to_user_id = body.get("to_user_id")
+    amount = body.get("amount")
+    description = body.get("description", "")
+
+    if not to_user_id:
+        raise HTTPException(status_code=400, detail="to_user_id is required")
+    if not amount or not isinstance(amount, int) or amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be a positive integer")
+
+    now = int(time.time())
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Check sender wallet
+        async with db.execute("SELECT * FROM wallet WHERE user_id = ?", (user_id,)) as cur:
+            sender_wallet = await cur.fetchone()
+        if not sender_wallet or sender_wallet["available_credits"] < amount:
+            raise HTTPException(status_code=400, detail="insufficient credits")
+
+        # Check recipient exists
+        async with db.execute("SELECT id FROM users WHERE id = ?", (to_user_id,)) as cur:
+            recipient = await cur.fetchone()
+        if not recipient:
+            raise HTTPException(status_code=404, detail="recipient user not found")
+
+        # Ensure recipient wallet exists
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO wallet (user_id, total_credits, available_credits, pending_credits, lifetime_earned, lifetime_spent)
+            VALUES (?, 0, 0, 0, 0, 0)
+            """,
+            (to_user_id,),
+        )
+
+        # Deduct from sender
+        await db.execute(
+            """
+            UPDATE wallet
+            SET total_credits = total_credits - ?,
+                available_credits = available_credits - ?,
+                lifetime_spent = lifetime_spent + ?
+            WHERE user_id = ?
+            """,
+            (amount, amount, amount, user_id),
+        )
+
+        # Add to recipient
+        await db.execute(
+            """
+            UPDATE wallet
+            SET total_credits = total_credits + ?,
+                available_credits = available_credits + ?,
+                lifetime_earned = lifetime_earned + ?
+            WHERE user_id = ?
+            """,
+            (amount, amount, amount, to_user_id),
+        )
+
+        # Create transaction records
+        tx_id_out = str(uuid.uuid4())
+        tx_id_in = str(uuid.uuid4())
+
+        await db.execute(
+            """
+            INSERT INTO transactions (id, user_id, type, amount, description, counterparty_id, created_at, status)
+            VALUES (?, ?, 'transfer_out', ?, ?, ?, ?, 'completed')
+            """,
+            (tx_id_out, user_id, amount, description or f"Transfer to {to_user_id}", to_user_id, now),
+        )
+
+        await db.execute(
+            """
+            INSERT INTO transactions (id, user_id, type, amount, description, counterparty_id, created_at, status)
+            VALUES (?, ?, 'transfer_in', ?, ?, ?, ?, 'completed')
+            """,
+            (tx_id_in, to_user_id, amount, description or f"Transfer from {user_id}", user_id, now),
+        )
+
+        await db.commit()
+
+    return {"status": "success", "transaction_id": tx_id_out, "amount": amount, "to_user_id": to_user_id}
+
+
+@app.get("/v1/tokens/rewards/rules")
+async def get_reward_rules(request: Request) -> Any:
+    """Get available reward rules."""
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT id, name, description, trigger_type, reward_credits, cooldown_minutes, max_per_day, is_active
+            FROM reward_rules
+            WHERE is_active = 1
+            ORDER BY name ASC
+            """
+        ) as cur:
+            rows = await cur.fetchall()
+
+    rules = []
+    for r in rows:
+        rules.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "description": r["description"],
+                "trigger_type": r["trigger_type"],
+                "reward_credits": r["reward_credits"],
+                "cooldown_minutes": r["cooldown_minutes"],
+                "max_per_day": r["max_per_day"],
+                "is_active": bool(r["is_active"]),
+            }
+        )
+
+    return {"rules": rules}
+
+
+@app.post("/v1/tokens/rewards/claim")
+async def claim_reward(request: Request) -> Any:
+    """Claim a reward for the authenticated user."""
+    user_id, _ = await _require_user_for_developer(request)
+    body = await request.json()
+
+    rule_id = body.get("rule_id")
+    if not rule_id:
+        raise HTTPException(status_code=400, detail="rule_id is required")
+
+    now = int(time.time())
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Get rule
+        async with db.execute(
+            "SELECT * FROM reward_rules WHERE id = ? AND is_active = 1",
+            (rule_id,),
+        ) as cur:
+            rule = await cur.fetchone()
+        if not rule:
+            raise HTTPException(status_code=404, detail="reward rule not found")
+
+        # Check cooldown
+        if rule["cooldown_minutes"]:
+            cooldown_cutoff = now - (rule["cooldown_minutes"] * 60)
+            async with db.execute(
+                """
+                SELECT claimed_at FROM reward_claims
+                WHERE user_id = ? AND rule_id = ? AND claimed_at > ?
+                ORDER BY claimed_at DESC LIMIT 1
+                """,
+                (user_id, rule_id, cooldown_cutoff),
+            ) as cur:
+                last_claim = await cur.fetchone()
+            if last_claim:
+                cooldown_remaining = (last_claim["claimed_at"] + rule["cooldown_minutes"] * 60) - now
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"reward on cooldown, wait {cooldown_remaining} seconds",
+                )
+
+        # Check daily limit
+        if rule["max_per_day"]:
+            day_start = now - (now % 86400)
+            async with db.execute(
+                """
+                SELECT COUNT(*) as count FROM reward_claims
+                WHERE user_id = ? AND rule_id = ? AND claimed_at >= ?
+                """,
+                (user_id, rule_id, day_start),
+            ) as cur:
+                today_claims = await cur.fetchone()
+            if today_claims["count"] >= rule["max_per_day"]:
+                raise HTTPException(status_code=400, detail="daily limit reached for this reward")
+
+        # Ensure wallet exists
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO wallet (user_id, total_credits, available_credits, pending_credits, lifetime_earned, lifetime_spent)
+            VALUES (?, 0, 0, 0, 0, 0)
+            """,
+            (user_id,),
+        )
+
+        # Award credits
+        await db.execute(
+            """
+            UPDATE wallet
+            SET total_credits = total_credits + ?,
+                available_credits = available_credits + ?,
+                lifetime_earned = lifetime_earned + ?
+            WHERE user_id = ?
+            """,
+            (rule["reward_credits"], rule["reward_credits"], rule["reward_credits"], user_id),
+        )
+
+        # Record claim
+        claim_id = str(uuid.uuid4())
+        await db.execute(
+            "INSERT INTO reward_claims (id, user_id, rule_id, claimed_at) VALUES (?, ?, ?, ?)",
+            (claim_id, user_id, rule_id, now),
+        )
+
+        # Create transaction
+        tx_id = str(uuid.uuid4())
+        await db.execute(
+            """
+            INSERT INTO transactions (id, user_id, type, amount, description, created_at, status)
+            VALUES (?, ?, 'reward', ?, ?, ?, 'completed')
+            """,
+            (tx_id, user_id, rule["reward_credits"], f"Reward: {rule['name']}", now),
+        )
+
+        await db.commit()
+
+    return {
+        "status": "claimed",
+        "claim_id": claim_id,
+        "rule_id": rule_id,
+        "reward_credits": rule["reward_credits"],
+    }
+
+
+@app.get("/v1/tokens/leaderboard")
+async def get_leaderboard(request: Request) -> Any:
+    """Get the leaderboard for the specified period."""
+    period = request.query_params.get("period", "all")
+    if period not in ("daily", "weekly", "monthly", "all"):
+        raise HTTPException(status_code=400, detail="invalid period, must be daily, weekly, monthly, or all")
+
+    limit = min(int(request.query_params.get("limit", 50)), 100)
+
+    async with aiosqlite.connect(TOKEN_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+
+        # Get cached leaderboard or compute on the fly
+        async with db.execute(
+            """
+            SELECT lc.user_id, lc.credits, lc.rank, u.name, u.avatar_url
+            FROM leaderboard_cache lc
+            JOIN users u ON u.id = lc.user_id
+            WHERE lc.period = ?
+            ORDER BY lc.rank ASC
+            LIMIT ?
+            """,
+            (period, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        if not rows:
+            # Compute from wallet if cache is empty
+            async with db.execute(
+                """
+                SELECT w.user_id, w.lifetime_earned as credits, u.name, u.avatar_url
+                FROM wallet w
+                JOIN users u ON u.id = w.user_id
+                ORDER BY w.lifetime_earned DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ) as cur:
+                rows = await cur.fetchall()
+
+    leaderboard = []
+    for idx, r in enumerate(rows, 1):
+        leaderboard.append(
+            {
+                "rank": idx,
+                "user_id": r["user_id"],
+                "name": r["name"],
+                "avatar_url": r["avatar_url"],
+                "credits": r["credits"],
+            }
+        )
+
+    return {"period": period, "leaderboard": leaderboard}
 
 
 if __name__ == "__main__":
