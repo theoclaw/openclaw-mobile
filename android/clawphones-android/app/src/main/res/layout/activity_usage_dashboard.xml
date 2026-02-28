@@ -48,7 +48,7 @@
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
-                <ai.clawphones.agent.chat.UsageDashboardActivity$UsageChartView
+                <View
                     android:id="@+id/usage_chart"
                     android:layout_width="match_parent"
                     android:layout_height="200dp"
