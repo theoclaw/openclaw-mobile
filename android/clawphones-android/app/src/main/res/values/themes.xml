@@ -45,14 +45,14 @@
 
         <!-- Left drawer. -->
         <item name="buttonBarButtonStyle">@style/TermuxActivity.Drawer.ButtonBarStyle.Light</item>
-        <item name="termuxActivityDrawerBackground">#FFFFFF</item>
+        <item name="termuxActivityDrawerBackground">@color/termux_drawer_background</item>
         <item name="termuxActivityDrawerImageTint">@color/clawphones_accent</item>
 
         <!-- Extra keys colors. -->
-        <item name="extraKeysButtonTextColor">#1F1B16</item>
+        <item name="extraKeysButtonTextColor">@color/termux_extra_keys_text</item>
         <item name="extraKeysButtonActiveTextColor">@color/clawphones_accent</item>
-        <item name="extraKeysButtonBackgroundColor">#FFFFFF</item>
-        <item name="extraKeysButtonActiveBackgroundColor">#F3E3CC</item>
+        <item name="extraKeysButtonBackgroundColor">@color/termux_extra_keys_bg</item>
+        <item name="extraKeysButtonActiveBackgroundColor">@color/termux_extra_keys_active_bg</item>
     </style>
 
 </resources>
