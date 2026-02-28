@@ -677,7 +677,7 @@
     <string name="task_description_label">任务描述 / Description</string>
     <string name="task_requirements_label">要求 / Requirements</string>
     <string name="task_location_label">位置 / Location</string>
-    <string name="task_location_format">%s, %s</string>
+    <string name="task_location_format" formatted="false">%s, %s</string>
     <string name="task_time_label">时间 / Time</string>
     <string name="task_time_created">创建时间 / Created</string>
     <string name="task_time_expires">截止时间 / Expires</string>
@@ -713,7 +713,7 @@
     <string name="performance_websocket">WebSocket</string>
     <string name="performance_push">推送 / Push</string>
     <string name="performance_latency_label">延迟 / Latency:</string>
-    <string name="performance_latency_value">延迟: %d ms / Latency: %d ms</string>
+    <string name="performance_latency_value" formatted="false">延迟: %d ms / Latency: %d ms</string>
     <string name="performance_latency_unavailable">不可用 / Unavailable</string>
     <string name="performance_system_metrics">系统指标 / System Metrics</string>
     <string name="performance_memory">内存使用 / Memory Usage</string>
@@ -726,7 +726,7 @@
     <string name="performance_bytes_in">接收 / Bytes In:</string>
     <string name="performance_bytes_out">发送 / Bytes Out:</string>
     <string name="performance_connections">连接数 / Connections:</string>
-    <string name="performance_connections_value">%d 连接 / %d connections</string>
+    <string name="performance_connections_value" formatted="false">%d 连接 / %d connections</string>
     <string name="performance_sync_status">同步状态 / Sync Status</string>
     <string name="performance_pending_uploads">待上传 / Pending Uploads:</string>
     <string name="performance_pending_downloads">待下载 / Pending Downloads:</string>
@@ -782,11 +782,11 @@
     <string name="rewards_total_rewards_label">累计奖励 / Total Rewards</string>
     <string name="rewards_total_format">%d Credits</string>
     <string name="rewards_daily_limit_label">今日领取 / Today</string>
-    <string name="rewards_today_claimed">%d / %d</string>
+    <string name="rewards_today_claimed" formatted="false">%d / %d</string>
     <string name="rewards_available_label">可领取奖励 / Available Rewards</string>
     <string name="rewards_claim">领取 / Claim</string>
     <string name="rewards_claimed">已领取 / Claimed</string>
-    <string name="rewards_countdown">过期时间: %s / Expires in: %s</string>
+    <string name="rewards_countdown" formatted="false">过期时间: %s / Expires in: %s</string>
     <string name="rewards_expired">已过期 / Expired</string>
     <string name="rewards_empty_state">暂无可用奖励 / No rewards available</string>
     <string name="rewards_daily_limit_reached">今日领取已达上限 / Daily limit reached</string>
@@ -849,7 +849,7 @@
     <string name="usage_dashboard_title">使用仪表盘 / Usage Dashboard</string>
     <string name="usage_chart_title">API 请求统计 / API Request Stats</string>
     <string name="rate_limit_label">速率限制 / Rate Limit</string>
-    <string name="rate_limit_format">%d / %d</string>
+    <string name="rate_limit_format" formatted="false">%d / %d</string>
     <string name="latency_label">平均延迟 / Average Latency</string>
     <string name="latency_value">%dms</string>
     <string name="top_endpoints_label">热门接口 / Top Endpoints</string>
@@ -868,8 +868,8 @@
     <string name="plugin_icon_desc">插件图标 / Plugin icon</string>
     <string name="button_install">安装 / Install</string>
     <string name="button_uninstall">卸载 / Uninstall</string>
-    <string name="plugin_installed">%s 已安装 / %s installed</string>
-    <string name="plugin_uninstalled">%s 已卸载 / %s uninstalled</string>
+    <string name="plugin_installed" formatted="false">%s 已安装 / %s installed</string>
+    <string name="plugin_uninstalled" formatted="false">%s 已卸载 / %s uninstalled</string>
 
     <!-- Main Hub Navigation -->
     <string name="nav_chat">聊天 / Chat</string>
