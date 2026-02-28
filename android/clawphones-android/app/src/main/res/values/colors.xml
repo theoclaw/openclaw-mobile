@@ -15,4 +15,10 @@
     <!-- Status colors -->
     <color name="status_connected">#4CAF50</color>
     <color name="status_disconnected">#9E9E9E</color>
+
+    <!-- Termux theme colors -->
+    <color name="termux_drawer_background">#FFFFFF</color>
+    <color name="termux_extra_keys_text">#1F1B16</color>
+    <color name="termux_extra_keys_bg">#FFFFFF</color>
+    <color name="termux_extra_keys_active_bg">#F3E3CC</color>
 </resources>
