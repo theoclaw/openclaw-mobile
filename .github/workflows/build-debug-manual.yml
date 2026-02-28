@@ -22,8 +22,11 @@ jobs:
       - name: Download bootstrap
         run: |
           cd android/clawphones-android/app/src/main/cpp
-          curl -fsSL -L -o bootstrap-aarch64.zip \
-            "https://github.com/zhixianio/botdrop-packages/releases/latest/download/bootstrap-aarch64.zip"
+          LATEST_URL=$(curl -s https://api.github.com/repos/zhixianio/botdrop-packages/releases/latest \
+            | python3 -c "import sys,json; assets=json.load(sys.stdin).get('assets',[]); print(next((a['browser_download_url'] for a in assets if 'aarch64' in a['name']),''  ))")
+          echo "Downloading: $LATEST_URL"
+          curl -fsSL -L -o bootstrap-aarch64.zip "$LATEST_URL"
+          echo "Downloaded $(stat --printf='%s' bootstrap-aarch64.zip) bytes"
 
       - name: Build Debug APK
         working-directory: android/clawphones-android
